@@ -72,6 +72,7 @@ RUN --mount=type=bind,source=docker/main/install_tempio.sh,target=/deps/install_
 # Download and Convert OpenVino model
 FROM base_host AS ov-converter
 ARG DEBIAN_FRONTEND
+ARG PIP_BREAK_SYSTEM_PACKAGES
 
 # Install OpenVino Runtime and Dev library
 COPY docker/main/requirements-ov.txt /requirements-ov.txt
@@ -147,6 +148,7 @@ RUN --mount=type=bind,source=docker/main/install_s6_overlay.sh,target=/deps/inst
 
 FROM base AS wheels
 ARG DEBIAN_FRONTEND
+ARG PIP_BREAK_SYSTEM_PACKAGES
 ARG TARGETARCH
 ARG DEBUG=false
 
@@ -215,6 +217,7 @@ ARG TARGETARCH
 ARG BASE_IMAGE
 
 ARG DEBIAN_FRONTEND
+ARG PIP_BREAK_SYSTEM_PACKAGES
 # http://stackoverflow.com/questions/48162574/ddg#49462622
 ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn
 
