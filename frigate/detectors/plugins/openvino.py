@@ -5,6 +5,7 @@ import queue
 
 import numpy as np
 import openvino as ov
+import openvino.properties.hint as hints
 from pydantic import Field
 from typing_extensions import Literal
 
@@ -29,7 +30,7 @@ class OvDetectorConfig(BaseDetectorConfig):
 
 
 class OvDetector(DetectionApi):
-    type_key = DETECTOR_KEY
+    type_key = "DETECTOR_KEY" # disabling this class from loading in api_types
     supported_models = [
         ModelTypeEnum.dfine,
         ModelTypeEnum.rfdetr,
@@ -38,29 +39,6 @@ class OvDetector(DetectionApi):
         ModelTypeEnum.yologeneric,
         ModelTypeEnum.yolox,
     ]
-    
-    def infer_runner(self):
-        while True:
-            try:
-                request_id, input_data = self.input_store.get()
-            except queue.Empty:
-                logger.warning("Input queue empty, continuing")
-                continue
-            # for frame in input_data:
-            self.infer_queue.start_async({self.input_layer_ir.any_name: input_data}, userdata=request_id)
-
-    def callback(self, infer_request, userdata):
-        # adding for yologeneric only atm
-        output_tensor = infer_request.get_output_tensor(0).data
-        # post process
-        if self.ov_model_type == ModelTypeEnum.yologeneric:
-            out_tensor = []
-
-            for item in output_tensor:
-                out_tensor.append(item.data)
-            processed_output = post_process_yolo(out_tensor, self.w, self.h)
-
-        self.response_store.put(userdata, processed_output)
 
     def __init__(self, detector_config: OvDetectorConfig):
         super().__init__(detector_config)
@@ -70,9 +48,6 @@ class OvDetector(DetectionApi):
         self.h = detector_config.model.height
         self.w = detector_config.model.width
         
-        self.input_store = RequestStore()
-        self.response_store = ResponseStore()
-        self.is_async = True # Enable async mode. TODO pick from config?
 
         if not os.path.isfile(detector_config.model.path):
             logger.error(f"OpenVino model file {detector_config.model.path} not found.")
@@ -81,12 +56,7 @@ class OvDetector(DetectionApi):
         self.interpreter = self.ov_core.compile_model(
             model=detector_config.model.path, device_name=detector_config.device
         )
-        logger.info("Performance hints: %s", self.interpreter.get_property("PERFORMANCE_HINT"))
-        self.infer_queue = ov.AsyncInferQueue(self.interpreter)
-        self.infer_queue.set_callback(self.callback)
-        self.input_layer_ir = self.interpreter.input(0)
-        self.infer_thread = threading.Thread(target=self.infer_runner, daemon=True)
-        self.infer_thread.start()
+        logger.info("Performance hints from SYNC: %s", self.interpreter.get_property("PERFORMANCE_HINT"))
 
         self.model_invalid = False
 
@@ -165,7 +135,7 @@ class OvDetector(DetectionApi):
             (pos[0] + (pos[2] / 2)) / self.w,  # x_max
         ]
 
-    def detect_raw_old(self, tensor_input):
+    def detect_raw(self, tensor_input):
         infer_request = self.interpreter.create_infer_request()
         # TODO: see if we can use shared_memory=True
         input_tensor = ov.Tensor(array=tensor_input)
@@ -266,21 +236,93 @@ class OvDetector(DetectionApi):
                     object_detected[6], object_detected[5], object_detected[:4]
                 )
             return detections
+    
 
-    def detect_raw(self, tensor_input):
-        start_time = time.time()
-        input_tensor = ov.Tensor(array=tensor_input)
-        request_id = self.input_store.put(input_tensor)
-        # logger.info(f"Submitted request {request_id} to inference queue")
-        try:
-            output_tensor = self.response_store.get(request_id, timeout=5)
+class OvAsyncDetector(DetectionApi):
+    type_key = DETECTOR_KEY
+    supported_models = [
+        ModelTypeEnum.dfine,
+        ModelTypeEnum.rfdetr,
+        ModelTypeEnum.ssd,
+        ModelTypeEnum.yolonas,
+        ModelTypeEnum.yologeneric,
+        ModelTypeEnum.yolox,
+    ]
+
+    def __init__(self, detector_config: OvDetectorConfig):
+        super().__init__(detector_config)
+        self.ov_core = ov.Core()
+        self.ov_model_type = detector_config.model.model_type
+        
+        self.h = detector_config.model.height
+        self.w = detector_config.model.width
+        
+        # we use RequestStore and ResponseStore that guarantees right mapping of requests to responses
+        self.input_store = RequestStore()
+        self.response_store = ResponseStore()
+        self.request_ids = queue.Queue(maxsize=1000)    # to track sent request_ids for retrieval of results
+        
+        if not os.path.isfile(detector_config.model.path):
+            logger.error(f"OpenVino model file {detector_config.model.path} not found.")
+            raise FileNotFoundError
+        
+        self.interpreter = self.ov_core.compile_model(
+            model=detector_config.model.path, device_name=detector_config.device
+        )
+        logger.info("Performance hints: %s", self.interpreter.get_property("PERFORMANCE_HINT"))
+        self.infer_queue = ov.AsyncInferQueue(self.interpreter)
+        self.infer_queue.set_callback(self.callback)
+        self.input_layer_ir = self.interpreter.input(0)
+        
+        self.model_invalid = False
+        
+        if self.ov_model_type not in self.supported_models:
+            logger.error(
+                f"OpenVino detector does not support {self.ov_model_type} models."
+            )
+            self.model_invalid = True
+        self.infer_thread = threading.Thread(target=self.inference_runner, daemon=True)
+        self.infer_thread.start()
             
+    def send_input(self, connection_id, tensor_input):
+        input_tensor = ov.Tensor(array=tensor_input)
+        # logger.warning(f"Submitting request {connection_id} to inference queue. type of connection_id is {type(connection_id)}")
+        request_id = self.input_store.put(input_tensor)
+        self.request_ids.put((request_id, connection_id))
+        return request_id
+    
+    def receive_output(self, timeout=5):
+        try:
+            request_id, connection_id = self.request_ids.get()
+            output_tensor = self.response_store.get(request_id, timeout=timeout)
+            return connection_id, output_tensor
         except TimeoutError:
             logger.error(f"Timeout waiting for inference result for request {request_id}")
-            return np.zeros((20, 6), np.float32)
-        finally:
-            self.infer_queue.wait_all()
-        elapsed_ms = (time.time() - start_time) * 1000
-        logger.info(f"infer took {elapsed_ms:.2f} ms")
+            return None, np.zeros((20, 6), np.float32)
+        # finally:
+        #     self.infer_queue.wait_all()
+          
+    def callback(self, infer_request, userdata):
+        # adding for yologeneric only atm
+        output_tensor = infer_request.get_output_tensor(0).data
+        # post process
+        if self.ov_model_type == ModelTypeEnum.yologeneric:
+            out_tensor = []
 
-        return output_tensor
+            for item in output_tensor:
+                out_tensor.append(item.data)
+            processed_output = post_process_yolo(out_tensor, self.w, self.h)
+
+        self.response_store.put(userdata, processed_output)
+        
+    def inference_runner(self):
+        while True:
+            try:
+                request_id, input_data = self.input_store.get()
+            except queue.Empty:
+                logger.warning("Input queue empty, continuing")
+                continue
+            self.infer_queue.start_async({self.input_layer_ir.any_name: input_data}, userdata=request_id)
+            
+    def detect_raw(self, tensor_input):
+        return 0

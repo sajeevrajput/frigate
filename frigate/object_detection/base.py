@@ -244,6 +244,9 @@ class AsyncDetectorRunner(FrigateProcess):
                 continue
             ts = self.send_times.popleft()
             duration = time.perf_counter() - ts
+            logger.info(
+                f"Inference took {duration:.3f}s"
+            )
 
             # release input buffer
             self._frame_manager.close(connection_id)
@@ -322,7 +325,9 @@ class ObjectDetectProcess:
             self.stop()
 
         # Async path for MemryX
-        if self.detector_config.type == "memryx":
+        # if self.detector_config.type == "memryx":
+        if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
+            logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
                 f"frigate.detector:{self.name}",
                 self.detection_queue,
@@ -334,6 +339,7 @@ class ObjectDetectProcess:
                 self.stop_event,
             )
         else:
+            logger.info("Starting Non ASYNC detection process...")
             self.detect_process = DetectorRunner(
                 f"frigate.detector:{self.name}",
                 self.detection_queue,
