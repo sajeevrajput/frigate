@@ -163,6 +163,9 @@ class DetectorRunner(FrigateProcess):
             self.start_time.value = datetime.datetime.now().timestamp()
             detections = object_detector.detect_raw(input_frame)
             duration = datetime.datetime.now().timestamp() - self.start_time.value
+            logger.info(
+                f"Inference took {duration:.3f}s"
+            )
             frame_manager.close(connection_id)
 
             if connection_id not in self.outputs:
