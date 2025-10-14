@@ -32,7 +32,7 @@ def register_genai_provider(key: GenAIProviderEnum):
 class GenAIClient:
     """Generative AI client for Frigate."""
 
-    def __init__(self, genai_config: GenAIConfig, timeout: int = 60) -> None:
+    def __init__(self, genai_config: GenAIConfig, timeout: int = 120) -> None:
         self.genai_config: GenAIConfig = genai_config
         self.timeout = timeout
         self.provider = self._init_provider()
@@ -44,6 +44,7 @@ class GenAIClient:
         concerns: list[str],
         preferred_language: str | None,
         debug_save: bool,
+        activity_context_prompt: str,
     ) -> ReviewMetadata | None:
         """Generate a description for the review item activity."""
 
@@ -62,44 +63,60 @@ class GenAIClient:
             else:
                 return ""
 
+        def get_verified_objects() -> str:
+            if review_data["recognized_objects"]:
+                return "  - " + "\n  - ".join(review_data["recognized_objects"])
+            else:
+                return "  None"
+
         context_prompt = f"""
 Please analyze the sequence of images ({len(thumbnails)} total) taken in chronological order from the perspective of the {review_data["camera"].replace("_", " ")} security camera.
 
-Your task is to provide a clear, security-focused description of the scene that:
+**Normal activity patterns for this property:**
+{activity_context_prompt}
+
+Your task is to provide a clear, accurate description of the scene that:
 1. States exactly what is happening based on observable actions and movements.
-2. Identifies and emphasizes behaviors that match patterns of suspicious activity.
+2. Evaluates whether the observable evidence suggests normal activity for this property or genuine security concerns.
 3. Assigns a potential_threat_level based on the definitions below, applying them consistently.
 
-Facts come first, but identifying security risks is the primary goal.
+**IMPORTANT: Start by checking if the activity matches the normal patterns above. If it does, assign Level 0. Only consider higher threat levels if the activity clearly deviates from normal patterns or shows genuine security concerns.**
 
 When forming your description:
-- Describe the time, people, and objects exactly as seen. Include any observable environmental changes (e.g., lighting changes triggered by activity).
-- Time of day should **increase suspicion only when paired with unusual or security-relevant behaviors**. Do not raise the threat level for common residential activities (e.g., residents walking pets, retrieving mail, gardening, playing with pets, supervising children) even at unusual hours, unless other suspicious indicators are present.
-- Focus on behaviors that are uncharacteristic of innocent activity: loitering without clear purpose, avoiding cameras, inspecting vehicles/doors, changing behavior when lights activate, scanning surroundings without an apparent benign reason.
-- **Benign context override**: If scanning or looking around is clearly part of an innocent activity (such as playing with a dog, gardening, supervising children, or watching for a pet), do not treat it as suspicious.
+- **CRITICAL: Only describe objects explicitly listed in "Detected objects" below.** Do not infer or mention additional people, vehicles, or objects not present in the detected objects list, even if visual patterns suggest them. If only a car is detected, do not describe a person interacting with it unless "person" is also in the detected objects list.
+- **Only describe actions actually visible in the frames.** Do not assume or infer actions that you don't observe happening. If someone walks toward furniture but you never see them sit, do not say they sat. Stick to what you can see across the sequence.
+- Describe what you observe: actions, movements, interactions with objects and the environment. Include any observable environmental changes (e.g., lighting changes triggered by activity).
+- Note visible details such as clothing, items being carried or placed, tools or equipment present, and how they interact with the property or objects.
+- Consider the full sequence chronologically: what happens from start to finish, how duration and actions relate to the location and objects involved.
+- **Use the actual timestamp provided in "Activity started at"** below for time of day context—do not infer time from image brightness or darkness. Unusual hours (late night/early morning) should increase suspicion when the observable behavior itself appears questionable. However, recognize that some legitimate activities can occur at any hour.
+- Identify patterns that suggest genuine security concerns: testing doors/windows on vehicles or buildings, accessing unauthorized areas, attempting to conceal actions, extended loitering without apparent purpose, taking items, behavior that clearly doesn't align with the zone context and detected objects.
+- **Weigh all evidence holistically**: Start by checking if the activity matches the normal patterns above. If it does, assign Level 0. Only consider Level 1 if the activity clearly deviates from normal patterns or shows genuine security concerns that warrant attention.
 
 Your response MUST be a flat JSON object with:
-- `scene` (string): A full description including setting, entities, actions, and any plausible supported inferences.
-- `confidence` (float): 0-1 confidence in the analysis.
-- `potential_threat_level` (integer): 0, 1, or 2 as defined below.
+- `title` (string): A concise, one-sentence title that captures the main activity. Include any verified recognized objects (from the "Verified recognized objects" list below) and key detected objects. Examples: "Joe walking dog in backyard", "Unknown person testing car doors at night".
+- `scene` (string): A narrative description of what happens across the sequence from start to finish. **Only describe actions you can actually observe happening in the frames provided.** Do not infer or assume actions that aren't visible (e.g., if you see someone walking but never see them sit, don't say they sat down). Include setting, detected objects, and their observable actions. Avoid speculation or filling in assumed behaviors. Your description should align with and support the threat level you assign.
+- `confidence` (float): 0-1 confidence in your analysis. Higher confidence when objects/actions are clearly visible and context is unambiguous. Lower confidence when the sequence is unclear, objects are partially obscured, or context is ambiguous.
+- `potential_threat_level` (integer): 0, 1, or 2 as defined below. Your threat level must be consistent with your scene description and the guidance above.
 {get_concern_prompt()}
 
 Threat-level definitions:
-- 0 — Typical or expected activity for this location/time (includes residents, guests, or known animals engaged in normal activities, even if they glance around or scan surroundings).
-- 1 — Unusual or suspicious activity: At least one security-relevant behavior is present **and not explainable by a normal residential activity**.
-- 2 — Active or immediate threat: Breaking in, vandalism, aggression, weapon display.
+- 0 — **Normal activity (DEFAULT)**: What you observe matches the normal activity patterns above or is consistent with expected activity for this property type. The observable evidence—considering zone context, detected objects, and timing together—supports a benign explanation. **Use this level for routine activities even if minor ambiguous elements exist.**
+- 1 — **Potentially suspicious**: Observable behavior raises genuine security concerns that warrant human review. The evidence doesn't support a routine explanation and clearly deviates from the normal patterns above. Examples: testing doors/windows on vehicles or structures, accessing areas that don't align with the activity, taking items that likely don't belong to them, behavior clearly inconsistent with the zone and context, or activity that lacks any visible legitimate indicators. **Only use this level when the activity clearly doesn't match normal patterns.**
+- 2 — **Immediate threat**: Clear evidence of forced entry, break-in, vandalism, aggression, weapons, theft in progress, or active property damage.
 
 Sequence details:
 - Frame 1 = earliest, Frame {len(thumbnails)} = latest
 - Activity started at {review_data["start"]} and lasted {review_data["duration"]} seconds
 - Detected objects: {", ".join(review_data["objects"])}
-- Verified recognized objects: {", ".join(review_data["recognized_objects"]) or "None"}
+- Verified recognized objects (use these names when describing these objects):
+{get_verified_objects()}
 - Zones involved: {", ".join(z.replace("_", " ").title() for z in review_data["zones"]) or "None"}
 
 **IMPORTANT:**
 - Values must be plain strings, floats, or integers — no nested objects, no extra commentary.
+- Only describe objects from the "Detected objects" list above. Do not hallucinate additional objects.
 {get_language_prompt()}
-        """
+"""
         logger.debug(
             f"Sending {len(thumbnails)} images to create review description on {review_data['camera']}"
         )
@@ -135,6 +152,7 @@ Sequence details:
                 if review_data["recognized_objects"]:
                     metadata.potential_threat_level = 0
 
+                metadata.time = review_data["start"]
                 return metadata
             except Exception as e:
                 # rarely LLMs can fail to follow directions on output format
@@ -146,34 +164,75 @@ Sequence details:
             return None
 
     def generate_review_summary(
-        self, start_ts: float, end_ts: float, segments: list[dict[str, Any]]
+        self,
+        start_ts: float,
+        end_ts: float,
+        segments: list[dict[str, Any]],
+        debug_save: bool,
     ) -> str | None:
         """Generate a summary of review item descriptions over a period of time."""
-        time_range = f"{datetime.datetime.fromtimestamp(start_ts).strftime('%I:%M %p')} to {datetime.datetime.fromtimestamp(end_ts).strftime('%I:%M %p')}"
+        time_range = f"{datetime.datetime.fromtimestamp(start_ts).strftime('%B %d, %Y at %I:%M %p')} to {datetime.datetime.fromtimestamp(end_ts).strftime('%B %d, %Y at %I:%M %p')}"
         timeline_summary_prompt = f"""
-You are a security officer. Time range: {time_range}.
-Input: JSON list with "scene", "confidence", "potential_threat_level" (1-2), "other_concerns".
-Write a report:
+You are a security officer.
+Time range: {time_range}.
+Input: JSON list with "title", "scene", "confidence", "potential_threat_level" (1-2), "other_concerns".
 
-Security Summary - {time_range}
-[One-sentence overview of activity]
-[Chronological bullet list of events with timestamps if in scene]
-[Final threat assessment]
+Task: Write a concise, human-presentable security report in markdown format.
 
-Rules:
-- List events in order.
-- Highlight potential_threat_level ≥ 1 with exact times.
-- Note any of the additional concerns which are present.
-- Note unusual activity even if not threats.
-- If no threats: "Final assessment: Only normal activity observed during this period."
-- No commentary, questions, or recommendations.
-- Output only the report.
-        """
+Rules for the report:
+
+- Title & overview
+  - Start with:
+    # Security Summary - {time_range}
+  - Write a 1-2 sentence situational overview capturing the general pattern of the period.
+
+- Event details
+  - Present events in chronological order as a bullet list.
+  - **If multiple events occur within the same minute or overlapping time range, COMBINE them into a single bullet.**
+    - Summarize the distinct activities as sub-points under the shared timestamp.
+  - If no timestamp is given, preserve order but label as “Time not specified.”
+  - Use bold timestamps for clarity.
+  - Group bullets under subheadings when multiple events fall into the same category (e.g., Vehicle Activity, Porch Activity, Unusual Behavior).
+
+- Threat levels
+  - Always show (threat level: X) for each event.
+  - If multiple events at the same time share the same threat level, only state it once.
+
+- Final assessment
+  - End with a Final Assessment section.
+  - If all events are threat level 1 with no escalation:
+    Final assessment: Only normal residential activity observed during this period.
+  - If threat level 2+ events are present, clearly summarize them as Potential concerns requiring review.
+
+- Conciseness
+  - Do not repeat benign clothing/appearance details unless they distinguish individuals.
+  - Summarize similar routine events instead of restating full scene descriptions.
+"""
 
         for item in segments:
             timeline_summary_prompt += f"\n{item}"
 
-        return self._send(timeline_summary_prompt, [])
+        if debug_save:
+            with open(
+                os.path.join(
+                    CLIPS_DIR, "genai-requests", f"{start_ts}-{end_ts}", "prompt.txt"
+                ),
+                "w",
+            ) as f:
+                f.write(timeline_summary_prompt)
+
+        response = self._send(timeline_summary_prompt, [])
+
+        if debug_save and response:
+            with open(
+                os.path.join(
+                    CLIPS_DIR, "genai-requests", f"{start_ts}-{end_ts}", "response.txt"
+                ),
+                "w",
+            ) as f:
+                f.write(response)
+
+        return response
 
     def generate_object_description(
         self,
@@ -183,9 +242,9 @@ Rules:
     ) -> Optional[str]:
         """Generate a description for the frame."""
         try:
-            prompt = camera_config.genai.object_prompts.get(
+            prompt = camera_config.objects.genai.object_prompts.get(
                 event.label,
-                camera_config.genai.prompt,
+                camera_config.objects.genai.prompt,
             ).format(**model_to_dict(event))
         except KeyError as e:
             logger.error(f"Invalid key in GenAI prompt: {e}")
@@ -201,6 +260,10 @@ Rules:
     def _send(self, prompt: str, images: list[bytes]) -> Optional[str]:
         """Submit a request to the provider."""
         return None
+
+    def get_context_size(self) -> int:
+        """Get the context window size for this provider in tokens."""
+        return 4096
 
 
 def get_genai_client(config: FrigateConfig) -> Optional[GenAIClient]:

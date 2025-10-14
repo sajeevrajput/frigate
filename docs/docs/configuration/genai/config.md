@@ -27,13 +27,26 @@ Parallel requests also come with some caveats. You will need to set `OLLAMA_NUM_
 
 You must use a vision capable model with Frigate. Current model variants can be found [in their model library](https://ollama.com/library). Note that Frigate will not automatically download the model you specify in your config, Ollama will try to download the model but it may take longer than the timeout, it is recommended to pull the model beforehand by running `ollama pull your_model` on your Ollama server/Docker container. Note that the model specified in Frigate's config must match the downloaded model tag.
 
+:::info
+
+Each model is available in multiple parameter sizes (3b, 4b, 8b, etc.). Larger sizes are more capable of complex tasks and understanding of situations, but requires more memory and computational resources. It is recommended to try multiple models and experiment to see which performs best.
+
+:::
+
+:::tip
+
+If you are trying to use a single model for Frigate and HomeAssistant, it will need to support vision and tools calling. https://github.com/skye-harris/ollama-modelfiles contains optimized model configs for this task.
+
+:::
+
 The following models are recommended:
 
-| Model             | Size   | Notes                                                       |
-| ----------------- | ------ | ----------------------------------------------------------- |
-| `gemma3:4b`       | 3.3 GB | Strong frame-to-frame understanding, slower inference times |
-| `qwen2.5vl:3b`    | 3.2 GB | Fast but capable model with good vision comprehension       |
-| `llava-phi3:3.8b` | 2.9 GB | Lightweight and fast model with vision comprehension        |
+| Model             | Notes                                                       |
+| ----------------- | ----------------------------------------------------------- |
+| `Intern3.5VL`     | Relatively fast with good vision comprehension
+| `gemma3`          | Strong frame-to-frame understanding, slower inference times |
+| `qwen2.5vl`       | Fast but capable model with good vision comprehension       |
+| `llava-phi3`      | Lightweight and fast model with vision comprehension        |
 
 :::note
 
@@ -50,6 +63,8 @@ genai:
   model: minicpm-v:8b
   provider_options:  # other Ollama client options can be defined
     keep_alive: -1
+    options:
+        num_ctx: 8192  # make sure the context matches other services that are using ollama
 ```
 
 ## Google Gemini

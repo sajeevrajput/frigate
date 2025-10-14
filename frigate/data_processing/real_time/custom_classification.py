@@ -48,9 +48,9 @@ class CustomStateClassificationProcessor(RealTimeProcessorApi):
         self.requestor = requestor
         self.model_dir = os.path.join(MODEL_CACHE_DIR, self.model_config.name)
         self.train_dir = os.path.join(CLIPS_DIR, self.model_config.name, "train")
-        self.interpreter: Interpreter = None
-        self.tensor_input_details: dict[str, Any] = None
-        self.tensor_output_details: dict[str, Any] = None
+        self.interpreter: Interpreter | None = None
+        self.tensor_input_details: dict[str, Any] | None = None
+        self.tensor_output_details: dict[str, Any] | None = None
         self.labelmap: dict[int, str] = {}
         self.classifications_per_second = EventsPerSecond()
         self.inference_speed = InferenceSpeed(
@@ -61,17 +61,24 @@ class CustomStateClassificationProcessor(RealTimeProcessorApi):
 
     @redirect_output_to_logger(logger, logging.DEBUG)
     def __build_detector(self) -> None:
+        model_path = os.path.join(self.model_dir, "model.tflite")
+        labelmap_path = os.path.join(self.model_dir, "labelmap.txt")
+
+        if not os.path.exists(model_path) or not os.path.exists(labelmap_path):
+            self.interpreter = None
+            self.tensor_input_details = None
+            self.tensor_output_details = None
+            self.labelmap = {}
+            return
+
         self.interpreter = Interpreter(
-            model_path=os.path.join(self.model_dir, "model.tflite"),
+            model_path=model_path,
             num_threads=2,
         )
         self.interpreter.allocate_tensors()
         self.tensor_input_details = self.interpreter.get_input_details()
         self.tensor_output_details = self.interpreter.get_output_details()
-        self.labelmap = load_labels(
-            os.path.join(self.model_dir, "labelmap.txt"),
-            prefill=0,
-        )
+        self.labelmap = load_labels(labelmap_path, prefill=0)
         self.classifications_per_second.start()
 
     def __update_metrics(self, duration: float) -> None:
@@ -134,9 +141,24 @@ class CustomStateClassificationProcessor(RealTimeProcessorApi):
         ]
 
         if frame.shape != (224, 224):
-            frame = cv2.resize(frame, (224, 224))
+            try:
+                resized_frame = cv2.resize(frame, (224, 224))
+            except Exception:
+                logger.warning("Failed to resize image for state classification")
+                return
 
-        input = np.expand_dims(frame, axis=0)
+        if self.interpreter is None:
+            write_classification_attempt(
+                self.train_dir,
+                cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+                "none-none",
+                now,
+                "unknown",
+                0.0,
+            )
+            return
+
+        input = np.expand_dims(resized_frame, axis=0)
         self.interpreter.set_tensor(self.tensor_input_details[0]["index"], input)
         self.interpreter.invoke()
         res: np.ndarray = self.interpreter.get_tensor(
@@ -150,6 +172,7 @@ class CustomStateClassificationProcessor(RealTimeProcessorApi):
         write_classification_attempt(
             self.train_dir,
             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+            "none-none",
             now,
             self.labelmap[best_id],
             score,
@@ -193,10 +216,10 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
         self.model_config = model_config
         self.model_dir = os.path.join(MODEL_CACHE_DIR, self.model_config.name)
         self.train_dir = os.path.join(CLIPS_DIR, self.model_config.name, "train")
-        self.interpreter: Interpreter = None
+        self.interpreter: Interpreter | None = None
         self.sub_label_publisher = sub_label_publisher
-        self.tensor_input_details: dict[str, Any] = None
-        self.tensor_output_details: dict[str, Any] = None
+        self.tensor_input_details: dict[str, Any] | None = None
+        self.tensor_output_details: dict[str, Any] | None = None
         self.detected_objects: dict[str, float] = {}
         self.labelmap: dict[int, str] = {}
         self.classifications_per_second = EventsPerSecond()
@@ -207,17 +230,24 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
 
     @redirect_output_to_logger(logger, logging.DEBUG)
     def __build_detector(self) -> None:
+        model_path = os.path.join(self.model_dir, "model.tflite")
+        labelmap_path = os.path.join(self.model_dir, "labelmap.txt")
+
+        if not os.path.exists(model_path) or not os.path.exists(labelmap_path):
+            self.interpreter = None
+            self.tensor_input_details = None
+            self.tensor_output_details = None
+            self.labelmap = {}
+            return
+
         self.interpreter = Interpreter(
-            model_path=os.path.join(self.model_dir, "model.tflite"),
+            model_path=model_path,
             num_threads=2,
         )
         self.interpreter.allocate_tensors()
         self.tensor_input_details = self.interpreter.get_input_details()
         self.tensor_output_details = self.interpreter.get_output_details()
-        self.labelmap = load_labels(
-            os.path.join(self.model_dir, "labelmap.txt"),
-            prefill=0,
-        )
+        self.labelmap = load_labels(labelmap_path, prefill=0)
 
     def __update_metrics(self, duration: float) -> None:
         self.classifications_per_second.update()
@@ -255,9 +285,24 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
         ]
 
         if crop.shape != (224, 224):
-            crop = cv2.resize(crop, (224, 224))
+            try:
+                resized_crop = cv2.resize(crop, (224, 224))
+            except Exception:
+                logger.warning("Failed to resize image for state classification")
+                return
 
-        input = np.expand_dims(crop, axis=0)
+        if self.interpreter is None:
+            write_classification_attempt(
+                self.train_dir,
+                cv2.cvtColor(crop, cv2.COLOR_RGB2BGR),
+                obj_data["id"],
+                now,
+                "unknown",
+                0.0,
+            )
+            return
+
+        input = np.expand_dims(resized_crop, axis=0)
         self.interpreter.set_tensor(self.tensor_input_details[0]["index"], input)
         self.interpreter.invoke()
         res: np.ndarray = self.interpreter.get_tensor(
@@ -272,6 +317,7 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
         write_classification_attempt(
             self.train_dir,
             cv2.cvtColor(crop, cv2.COLOR_RGB2BGR),
+            obj_data["id"],
             now,
             self.labelmap[best_id],
             score,
@@ -330,6 +376,7 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
 def write_classification_attempt(
     folder: str,
     frame: np.ndarray,
+    event_id: str,
     timestamp: float,
     label: str,
     score: float,
@@ -337,7 +384,7 @@ def write_classification_attempt(
     if "-" in label:
         label = label.replace("-", "_")
 
-    file = os.path.join(folder, f"{timestamp}-{label}-{score}.webp")
+    file = os.path.join(folder, f"{event_id}-{timestamp}-{label}-{score}.webp")
     os.makedirs(folder, exist_ok=True)
     cv2.imwrite(file, frame)
 

@@ -82,6 +82,14 @@
     "length": {
       "feet": "feet",
       "meters": "meters"
+    },
+    "data": {
+      "kbps": "kB/s",
+      "mbps": "MB/s",
+      "gbps": "GB/s",
+      "kbph": "kB/hour",
+      "mbph": "MB/hour",
+      "gbph": "GB/hour"
     }
   },
   "label": {
@@ -263,5 +271,8 @@
     "desc": "Page not found"
   },
   "selectItem": "Select {{item}}",
-  "readTheDocumentation": "Read the documentation"
+  "readTheDocumentation": "Read the documentation",
+  "information": {
+    "pixels": "{{area}}px"
+  }
 }

@@ -8,6 +8,7 @@ from .base import FrigateBaseModel
 __all__ = [
     "CameraFaceRecognitionConfig",
     "CameraLicensePlateRecognitionConfig",
+    "CameraAudioTranscriptionConfig",
     "FaceRecognitionConfig",
     "SemanticSearchConfig",
     "CameraSemanticSearchConfig",
@@ -47,13 +48,10 @@ class AudioTranscriptionConfig(FrigateBaseModel):
     )
     device: Optional[EnrichmentsDeviceEnum] = Field(
         default=EnrichmentsDeviceEnum.CPU,
-        title="The device used for license plate recognition.",
+        title="The device used for audio transcription.",
     )
     model_size: str = Field(
         default="small", title="The size of the embeddings model used."
-    )
-    enabled_in_config: Optional[bool] = Field(
-        default=None, title="Keep track of original state of camera."
     )
     live_enabled: Optional[bool] = Field(
         default=False, title="Enable live transcriptions."
@@ -138,6 +136,9 @@ class SemanticSearchConfig(FrigateBaseModel):
 
 
 class TriggerConfig(FrigateBaseModel):
+    friendly_name: Optional[str] = Field(
+        None, title="Trigger friendly name used in the Frigate UI."
+    )
     enabled: bool = Field(default=True, title="Enable this trigger")
     type: TriggerType = Field(default=TriggerType.DESCRIPTION, title="Type of trigger")
     data: str = Field(title="Trigger content (text phrase or image ID)")
@@ -217,6 +218,13 @@ class CameraFaceRecognitionConfig(FrigateBaseModel):
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
 
+class ReplaceRule(FrigateBaseModel):
+    pattern: str = Field(..., title="Regex pattern to match.")
+    replacement: str = Field(
+        ..., title="Replacement string (supports backrefs like '\\1')."
+    )
+
+
 class LicensePlateRecognitionConfig(FrigateBaseModel):
     enabled: bool = Field(default=False, title="Enable license plate recognition.")
     model_size: str = Field(
@@ -269,6 +277,10 @@ class LicensePlateRecognitionConfig(FrigateBaseModel):
         title="The device key to use for LPR.",
         description="This is an override, to target a specific device. See https://onnxruntime.ai/docs/execution-providers/ for more information",
     )
+    replace_rules: List[ReplaceRule] = Field(
+        default_factory=list,
+        title="List of regex replacement rules for normalizing detected plates. Each rule has 'pattern' and 'replacement'.",
+    )
 
 
 class CameraLicensePlateRecognitionConfig(FrigateBaseModel):
@@ -287,6 +299,18 @@ class CameraLicensePlateRecognitionConfig(FrigateBaseModel):
         title="Amount of contrast adjustment and denoising to apply to license plate images before recognition.",
         ge=0,
         le=10,
+    )
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+
+class CameraAudioTranscriptionConfig(FrigateBaseModel):
+    enabled: bool = Field(default=False, title="Enable audio transcription.")
+    enabled_in_config: Optional[bool] = Field(
+        default=None, title="Keep track of original state of audio transcription."
+    )
+    live_enabled: Optional[bool] = Field(
+        default=False, title="Enable live transcriptions."
     )
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())

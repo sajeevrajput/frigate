@@ -237,6 +237,7 @@ export interface CameraConfig {
         data: string;
         threshold: number;
         actions: TriggerAction[];
+        friendly_name: string;
       };
     };
   };
@@ -340,6 +341,12 @@ export interface FrigateConfig {
 
   audio_transcription: {
     enabled: boolean;
+  };
+
+  auth: {
+    roles: {
+      [roleName: string]: string[];
+    };
   };
 
   birdseye: BirdseyeConfig;

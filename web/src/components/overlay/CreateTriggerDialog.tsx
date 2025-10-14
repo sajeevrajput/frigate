@@ -38,6 +38,15 @@ import { Trigger, TriggerAction, TriggerType } from "@/types/trigger";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "../ui/textarea";
 import { useCameraFriendlyName } from "@/hooks/use-camera-friendly-name";
+import { isDesktop, isMobile } from "react-device-detect";
+import { cn } from "@/lib/utils";
+import {
+  MobilePage,
+  MobilePageContent,
+  MobilePageDescription,
+  MobilePageHeader,
+  MobilePageTitle,
+} from "../mobile/MobilePage";
 
 type CreateTriggerDialogProps = {
   show: boolean;
@@ -51,6 +60,7 @@ type CreateTriggerDialogProps = {
     data: string,
     threshold: number,
     actions: TriggerAction[],
+    friendly_name: string,
   ) => void;
   onEdit: (trigger: Trigger) => void;
   onCancel: () => void;
@@ -93,6 +103,7 @@ export default function CreateTriggerDialog({
           !existingTriggerNames.includes(value) || value === trigger?.name,
         t("triggers.dialog.form.name.error.alreadyExists"),
       ),
+    friendly_name: z.string().optional(),
     type: z.enum(["thumbnail", "description"]),
     data: z.string().min(1, t("triggers.dialog.form.content.error.required")),
     threshold: z
@@ -108,6 +119,7 @@ export default function CreateTriggerDialog({
     defaultValues: {
       enabled: trigger?.enabled ?? true,
       name: trigger?.name ?? "",
+      friendly_name: trigger?.friendly_name ?? "",
       type: trigger?.type ?? "description",
       data: trigger?.data ?? "",
       threshold: trigger?.threshold ?? 0.5,
@@ -126,6 +138,7 @@ export default function CreateTriggerDialog({
         values.data,
         values.threshold,
         values.actions,
+        values.friendly_name ?? "",
       );
     }
   };
@@ -135,6 +148,7 @@ export default function CreateTriggerDialog({
       form.reset({
         enabled: true,
         name: "",
+        friendly_name: "",
         type: "description",
         data: "",
         threshold: 0.5,
@@ -145,6 +159,7 @@ export default function CreateTriggerDialog({
         {
           enabled: trigger.enabled,
           name: trigger.name,
+          friendly_name: trigger.friendly_name ?? "",
           type: trigger.type,
           data: trigger.data,
           threshold: trigger.threshold,
@@ -164,18 +179,30 @@ export default function CreateTriggerDialog({
 
   const cameraName = useCameraFriendlyName(selectedCamera);
 
+  const Overlay = isDesktop ? Dialog : MobilePage;
+  const Content = isDesktop ? DialogContent : MobilePageContent;
+  const Header = isDesktop ? DialogHeader : MobilePageHeader;
+  const Description = isDesktop ? DialogDescription : MobilePageDescription;
+  const Title = isDesktop ? DialogTitle : MobilePageTitle;
+
   return (
-    <Dialog open={show} onOpenChange={onCancel}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>
+    <Overlay open={show} onOpenChange={onCancel}>
+      <Content
+        className={cn(
+          "scrollbar-container overflow-y-auto",
+          isDesktop && "my-4 flex max-h-dvh flex-col",
+          isMobile && "px-4",
+        )}
+      >
+        <Header className="mt-2" onClose={onCancel}>
+          <Title>
             {t(
               trigger
                 ? "triggers.dialog.editTrigger.title"
                 : "triggers.dialog.createTrigger.title",
             )}
-          </DialogTitle>
-          <DialogDescription>
+          </Title>
+          <Description className={cn(!isDesktop && "sr-only")}>
             {t(
               trigger
                 ? "triggers.dialog.editTrigger.desc"
@@ -184,13 +211,13 @@ export default function CreateTriggerDialog({
                 camera: cameraName,
               },
             )}
-          </DialogDescription>
-        </DialogHeader>
+          </Description>
+        </Header>
 
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit(onSubmit)}
-            className="space-y-5 py-4"
+            className="space-y-5 pt-4"
           >
             <FormField
               control={form.control}
@@ -205,6 +232,31 @@ export default function CreateTriggerDialog({
                       {...field}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="friendly_name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {t("triggers.dialog.form.friendly_name.title")}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={t(
+                        "triggers.dialog.form.friendly_name.placeholder",
+                      )}
+                      className="h-10"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t("triggers.dialog.form.friendly_name.description")}
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -415,7 +467,7 @@ export default function CreateTriggerDialog({
             </DialogFooter>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Overlay>
   );
 }

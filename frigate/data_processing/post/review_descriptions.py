@@ -43,6 +43,21 @@ class ReviewDescriptionProcessor(PostProcessorApi):
         self.review_descs_dps = EventsPerSecond()
         self.review_descs_dps.start()
 
+    def calculate_frame_count(self) -> int:
+        """Calculate optimal number of frames based on context size."""
+        # With our preview images (height of 180px) each image should be ~100 tokens per image
+        # We want to be conservative to not have too long of query times with too many images
+        context_size = self.genai_client.get_context_size()
+
+        if context_size > 10000:
+            return 20
+        elif context_size > 6000:
+            return 16
+        elif context_size > 4000:
+            return 12
+        else:
+            return 8
+
     def process_data(self, data, data_type):
         self.metrics.review_desc_dps.value = self.review_descs_dps.eps()
 
@@ -93,7 +108,7 @@ class ReviewDescriptionProcessor(PostProcessorApi):
 
                 if camera_config.review.genai.debug_save_thumbnails:
                     id = data["after"]["id"]
-                    Path(os.path.join(CLIPS_DIR, f"genai-requests/{id}")).mkdir(
+                    Path(os.path.join(CLIPS_DIR, "genai-requests", f"{id}")).mkdir(
                         parents=True, exist_ok=True
                     )
                     shutil.copy(
@@ -124,6 +139,9 @@ class ReviewDescriptionProcessor(PostProcessorApi):
         if topic == EmbeddingsRequestEnum.summarize_review.value:
             start_ts = request_data["start_ts"]
             end_ts = request_data["end_ts"]
+            logger.debug(
+                f"Found GenAI Review Summary request for {start_ts} to {end_ts}"
+            )
             items: list[dict[str, Any]] = [
                 r["data"]["metadata"]
                 for r in (
@@ -141,7 +159,7 @@ class ReviewDescriptionProcessor(PostProcessorApi):
 
             if len(items) == 0:
                 logger.debug("No review items with metadata found during time period")
-                return None
+                return "No activity was found during this time."
 
             important_items = list(
                 filter(
@@ -154,8 +172,16 @@ class ReviewDescriptionProcessor(PostProcessorApi):
             if not important_items:
                 return "No concerns were found during this time period."
 
+            if self.config.review.genai.debug_save_thumbnails:
+                Path(
+                    os.path.join(CLIPS_DIR, "genai-requests", f"{start_ts}-{end_ts}")
+                ).mkdir(parents=True, exist_ok=True)
+
             return self.genai_client.generate_review_summary(
-                start_ts, end_ts, important_items
+                start_ts,
+                end_ts,
+                important_items,
+                self.config.review.genai.debug_save_thumbnails,
             )
         else:
             return None
@@ -165,7 +191,6 @@ class ReviewDescriptionProcessor(PostProcessorApi):
         camera: str,
         start_time: float,
         end_time: float,
-        desired_frame_count: int = 12,
     ) -> list[str]:
         preview_dir = os.path.join(CACHE_DIR, "preview_frames")
         file_start = f"preview_{camera}"
@@ -192,6 +217,8 @@ class ReviewDescriptionProcessor(PostProcessorApi):
             all_frames.append(os.path.join(preview_dir, file))
 
         frame_count = len(all_frames)
+        desired_frame_count = self.calculate_frame_count()
+
         if frame_count <= desired_frame_count:
             return all_frames
 
@@ -224,23 +251,28 @@ def run_analysis(
         "start": datetime.datetime.fromtimestamp(final_data["start_time"]).strftime(
             "%A, %I:%M %p"
         ),
-        "duration": final_data["end_time"] - final_data["start_time"],
+        "duration": round(final_data["end_time"] - final_data["start_time"]),
     }
 
     objects = []
-    verified_objects = []
+    named_objects = []
 
-    for label in set(final_data["data"]["objects"] + final_data["data"]["sub_labels"]):
+    objects_list = final_data["data"]["objects"]
+    sub_labels_list = final_data["data"]["sub_labels"]
+
+    for label in objects_list:
         if "-verified" in label:
             continue
-
-        if label in labelmap_objects:
+        elif label in labelmap_objects:
             objects.append(label.replace("_", " ").title())
-        else:
-            verified_objects.append(label.replace("_", " ").title())
+
+    for i, verified_label in enumerate(final_data["data"]["verified_objects"]):
+        named_objects.append(
+            f"{sub_labels_list[i].replace('_', ' ').title()} ({verified_label.replace('-verified', '')})"
+        )
 
     analytics_data["objects"] = objects
-    analytics_data["recognized_objects"] = verified_objects
+    analytics_data["recognized_objects"] = named_objects
 
     metadata = genai_client.generate_review_description(
         analytics_data,
@@ -248,6 +280,7 @@ def run_analysis(
         genai_config.additional_concerns,
         genai_config.preferred_language,
         genai_config.debug_save_thumbnails,
+        genai_config.activity_context_prompt,
     )
     review_inference_speed.update(datetime.datetime.now().timestamp() - start)
 

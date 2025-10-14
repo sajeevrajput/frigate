@@ -65,6 +65,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CameraNameLabel } from "@/components/camera/CameraNameLabel";
+import { useAllowedCameras } from "@/hooks/use-allowed-cameras";
+import { GenAISummaryDialog } from "@/components/overlay/chip/GenAISummaryChip";
+
+const DATA_REFRESH_TIME = 600000; // 10 minutes
 
 type RecordingViewProps = {
   startCamera: string;
@@ -76,6 +80,7 @@ type RecordingViewProps = {
   allPreviews?: Preview[];
   filter?: ReviewFilter;
   updateFilter: (newFilter: ReviewFilter) => void;
+  refreshData?: () => void;
 };
 export function RecordingView({
   startCamera,
@@ -87,6 +92,7 @@ export function RecordingView({
   allPreviews,
   filter,
   updateFilter,
+  refreshData,
 }: RecordingViewProps) {
   const { t } = useTranslation(["views/events"]);
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -97,17 +103,23 @@ export function RecordingView({
 
   const timezone = useTimezone(config);
 
+  const allowedCameras = useAllowedCameras();
+  const effectiveCameras = useMemo(
+    () => allCameras.filter((camera) => allowedCameras.includes(camera)),
+    [allCameras, allowedCameras],
+  );
+  const [mainCamera, setMainCamera] = useState(startCamera);
+
   const { data: recordingsSummary } = useSWR<RecordingsSummary>([
     "recordings/summary",
     {
       timezone: timezone,
-      cameras: allCameras.join(",") ?? null,
+      cameras: mainCamera ?? null,
     },
   ]);
 
   // controller state
 
-  const [mainCamera, setMainCamera] = useState(startCamera);
   const mainControllerRef = useRef<DynamicVideoController | null>(null);
   const mainLayoutRef = useRef<HTMLDivElement | null>(null);
   const cameraLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -183,6 +195,40 @@ export function RecordingView({
       setSelectedRangeIdx(selectedRangeIdx + 1);
     }
   }, [selectedRangeIdx, chunkedTimeRange]);
+
+  // visibility tracking for refreshing stale data
+
+  const lastVisibilityTime = useRef<number>(Date.now());
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        const now = Date.now();
+        const timeSinceLastVisible = now - lastVisibilityTime.current;
+
+        // Only refresh if user was away for a while
+        // and the video is not currently playing
+        if (
+          timeSinceLastVisible >= DATA_REFRESH_TIME &&
+          refreshData &&
+          mainControllerRef.current &&
+          !mainControllerRef.current.isPlaying()
+        ) {
+          refreshData();
+        }
+
+        lastVisibilityTime.current = now;
+      } else {
+        lastVisibilityTime.current = Date.now();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshData]);
 
   // scrubbing and timeline state
 
@@ -276,14 +322,16 @@ export function RecordingView({
 
   const onSelectCamera = useCallback(
     (newCam: string) => {
-      setMainCamera(newCam);
-      setFullResolution({
-        width: 0,
-        height: 0,
-      });
-      setPlaybackStart(currentTime);
+      if (allowedCameras.includes(newCam)) {
+        setMainCamera(newCam);
+        setFullResolution({
+          width: 0,
+          height: 0,
+        });
+        setPlaybackStart(currentTime);
+      }
     },
-    [currentTime],
+    [currentTime, allowedCameras],
   );
 
   // fullscreen
@@ -449,6 +497,29 @@ export function RecordingView({
     [visiblePreviewObserver.current],
   );
 
+  const activeReviewItem = useMemo(() => {
+    if (!config?.cameras?.[mainCamera].review.genai?.enabled_in_config) {
+      return undefined;
+    }
+
+    return mainCameraReviewItems.find(
+      (rev) =>
+        rev.start_time - REVIEW_PADDING < currentTime &&
+        rev.end_time &&
+        currentTime < rev.end_time + REVIEW_PADDING,
+    );
+  }, [config, currentTime, mainCameraReviewItems, mainCamera]);
+  const onAnalysisOpen = useCallback(
+    (open: boolean) => {
+      if (open) {
+        mainControllerRef.current?.pause();
+      } else {
+        mainControllerRef.current?.play();
+      }
+    },
+    [mainControllerRef],
+  );
+
   return (
     <div ref={contentRef} className="flex size-full flex-col pt-2">
       <Toaster closeButton={true} />
@@ -488,12 +559,9 @@ export function RecordingView({
         </div>
         <div className="flex items-center justify-end gap-2">
           <MobileCameraDrawer
-            allCameras={allCameras}
+            allCameras={effectiveCameras}
             selected={mainCamera}
-            onSelectCamera={(cam) => {
-              setPlaybackStart(currentTime);
-              setMainCamera(cam);
-            }}
+            onSelectCamera={onSelectCamera}
           />
           {isDesktop && (
             <ExportDialog
@@ -648,6 +716,13 @@ export function RecordingView({
                   : Math.max(1, getCameraAspect(mainCamera) ?? 0),
               }}
             >
+              {isDesktop && (
+                <GenAISummaryDialog
+                  review={activeReviewItem}
+                  onOpen={onAnalysisOpen}
+                />
+              )}
+
               <DynamicVideoPlayer
                 className={grow}
                 camera={mainCamera}
@@ -674,7 +749,7 @@ export function RecordingView({
                 containerRef={mainLayoutRef}
               />
             </div>
-            {isDesktop && allCameras.length > 1 && (
+            {isDesktop && effectiveCameras.length > 1 && (
               <div
                 ref={previewRowRef}
                 className={cn(
@@ -686,7 +761,7 @@ export function RecordingView({
                 )}
               >
                 <div className="w-2" />
-                {allCameras.map((cam) => {
+                {effectiveCameras.map((cam) => {
                   if (cam == mainCamera || cam == "birdseye") {
                     return;
                   }
@@ -738,12 +813,14 @@ export function RecordingView({
           }
           timeRange={timeRange}
           mainCameraReviewItems={mainCameraReviewItems}
+          activeReviewItem={activeReviewItem}
           currentTime={currentTime}
           exportRange={exportMode == "timeline" ? exportRange : undefined}
           setCurrentTime={setCurrentTime}
           manuallySetCurrentTime={manuallySetCurrentTime}
           setScrubbing={setScrubbing}
           setExportRange={setExportRange}
+          onAnalysisOpen={onAnalysisOpen}
         />
       </div>
     </div>
@@ -757,12 +834,14 @@ type TimelineProps = {
   timelineType: TimelineType;
   timeRange: TimeRange;
   mainCameraReviewItems: ReviewSegment[];
+  activeReviewItem?: ReviewSegment;
   currentTime: number;
   exportRange?: TimeRange;
   setCurrentTime: React.Dispatch<React.SetStateAction<number>>;
   manuallySetCurrentTime: (time: number, force: boolean) => void;
   setScrubbing: React.Dispatch<React.SetStateAction<boolean>>;
   setExportRange: (range: TimeRange) => void;
+  onAnalysisOpen: (open: boolean) => void;
 };
 function Timeline({
   contentRef,
@@ -771,12 +850,14 @@ function Timeline({
   timelineType,
   timeRange,
   mainCameraReviewItems,
+  activeReviewItem,
   currentTime,
   exportRange,
   setCurrentTime,
   manuallySetCurrentTime,
   setScrubbing,
   setExportRange,
+  onAnalysisOpen,
 }: TimelineProps) {
   const { t } = useTranslation(["views/events"]);
   const internalTimelineRef = useRef<HTMLDivElement>(null);
@@ -854,12 +935,17 @@ function Timeline({
 
   return (
     <div
-      className={`${
+      className={cn(
+        "relative",
         isDesktop
           ? `${timelineType == "timeline" ? "w-[100px]" : "w-60"} no-scrollbar overflow-y-auto`
-          : `overflow-hidden portrait:flex-grow ${timelineType == "timeline" ? "landscape:w-[100px]" : "landscape:w-[175px]"} `
-      } relative`}
+          : `overflow-hidden portrait:flex-grow ${timelineType == "timeline" ? "landscape:w-[100px]" : "landscape:w-[175px]"}`,
+      )}
     >
+      {isMobile && (
+        <GenAISummaryDialog review={activeReviewItem} onOpen={onAnalysisOpen} />
+      )}
+
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-[30px] w-full bg-gradient-to-b from-secondary to-transparent"></div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[30px] w-full bg-gradient-to-t from-secondary to-transparent"></div>
       {timelineType == "timeline" ? (
@@ -911,7 +997,7 @@ function Timeline({
                   <ReviewCard
                     key={review.id}
                     event={review}
-                    currentTime={currentTime}
+                    activeReviewItem={activeReviewItem}
                     onClick={() => {
                       manuallySetCurrentTime(
                         review.start_time - REVIEW_PADDING,

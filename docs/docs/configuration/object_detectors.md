@@ -35,12 +35,17 @@ Frigate supports multiple different detectors that work on different types of ha
 - [ONNX](#onnx): TensorRT will automatically be detected and used as a detector in the `-tensorrt` Frigate image when a supported ONNX model is configured.
 
 **Nvidia Jetson**
+
 - [TensortRT](#nvidia-tensorrt-detector): TensorRT can run on Jetson devices, using one of many default models.
 - [ONNX](#onnx): TensorRT will automatically be detected and used as a detector in the `-tensorrt-jp6` Frigate image when a supported ONNX model is configured.
 
 **Rockchip**
 
 - [RKNN](#rockchip-platform): RKNN models can run on Rockchip devices with included NPUs.
+
+**Synaptics**
+
+- [Synaptics](#synaptics): synap models can run on Synaptics devices(e.g astra machina) with included NPUs.
 
 **For Testing**
 
@@ -331,6 +336,12 @@ The YOLO detector has been designed to support YOLOv3, YOLOv4, YOLOv7, and YOLOv
 
 :::
 
+:::warning
+
+If you are using a Frigate+ YOLOv9 model, you should not define any of the below `model` parameters in your config except for `path`. See [the Frigate+ model docs](/plus/first_model#step-3-set-your-model-id-in-the-config) for more information on setting up your model.
+
+:::
+
 After placing the downloaded onnx model in your config folder, you can use the following configuration:
 
 ```yaml
@@ -442,12 +453,13 @@ The YOLO detector has been designed to support YOLOv3, YOLOv4, YOLOv7, and YOLOv
 
 :::
 
-After placing the downloaded onnx model in your config folder, you can use the following configuration:
+When Frigate is started with the following config it will connect to the detector client and transfer the model automatically:
 
 ```yaml
 detectors:
-  onnx:
-    type: onnx
+  apple-silicon:
+    type: zmq
+    endpoint: tcp://host.docker.internal:5555
 
 model:
   model_type: yolo-generic
@@ -543,6 +555,17 @@ $ docker exec -it frigate /bin/bash -c '(unset HSA_OVERRIDE_GFX_VERSION && /opt/
 
 ### ROCm Supported Models
 
+:::tip
+
+The AMD GPU kernel is known problematic especially when converting models to mxr format. The recommended approach is:
+
+1. Disable object detection in the config.
+2. Startup Frigate with the onnx detector configured, the main object detection model will be converted to mxr format and cached in the config directory.
+3. Once this is finished as indicated by the logs, enable object detection in the UI and confirm that it is working correctly.
+4. Re-enable object detection in the config.
+
+:::
+
 See [ONNX supported models](#supported-models) for supported models, there are some caveats:
 
 - D-FINE models are not supported
@@ -592,6 +615,12 @@ There is no default model provided, the following formats are supported:
 
 [YOLO-NAS](https://github.com/Deci-AI/super-gradients/blob/master/YOLONAS.md) models are supported, but not included by default. See [the models section](#downloading-yolo-nas-model) for more information on downloading the YOLO-NAS model for use in Frigate.
 
+:::warning
+
+If you are using a Frigate+ YOLO-NAS model, you should not define any of the below `model` parameters in your config except for `path`. See [the Frigate+ model docs](/plus/first_model#step-3-set-your-model-id-in-the-config) for more information on setting up your model.
+
+:::
+
 After placing the downloaded onnx model in your config folder, you can use the following configuration:
 
 ```yaml
@@ -616,6 +645,12 @@ YOLOv3, YOLOv4, YOLOv7, and [YOLOv9](https://github.com/WongKinYiu/yolov9) model
 :::tip
 
 The YOLO detector has been designed to support YOLOv3, YOLOv4, YOLOv7, and YOLOv9 models, but may support other YOLO model architectures as well. See [the models section](#downloading-yolo-models) for more information on downloading YOLO models for use in Frigate.
+
+:::
+
+:::warning
+
+If you are using a Frigate+ YOLOv9 model, you should not define any of the below `model` parameters in your config except for `path`. See [the Frigate+ model docs](/plus/first_model#step-3-set-your-model-id-in-the-config) for more information on setting up your model.
 
 :::
 
@@ -757,19 +792,19 @@ To verify that the integration is working correctly, start Frigate and observe t
 
 # Community Supported Detectors
 
-## MemryX MX3  
+## MemryX MX3
 
-This detector is available for use with the MemryX MX3 accelerator M.2 module. Frigate supports the MX3 on compatible hardware platforms, providing efficient and high-performance object detection.  
+This detector is available for use with the MemryX MX3 accelerator M.2 module. Frigate supports the MX3 on compatible hardware platforms, providing efficient and high-performance object detection.
 
 See the [installation docs](../frigate/installation.md#memryx-mx3) for information on configuring the MemryX hardware.
 
 To configure a MemryX detector, simply set the `type` attribute to `memryx` and follow the configuration guide below.
 
-### Configuration  
+### Configuration
 
-To configure the MemryX detector, use the following example configuration:  
+To configure the MemryX detector, use the following example configuration:
 
-#### Single PCIe MemryX MX3  
+#### Single PCIe MemryX MX3
 
 ```yaml
 detectors:
@@ -795,7 +830,7 @@ detectors:
     device: PCIe:2
 ```
 
-### Supported Models 
+### Supported Models
 
 MemryX `.dfp` models are automatically downloaded at runtime, if enabled, to the container at `/memryx_models/model_folder/`.
 
@@ -809,9 +844,9 @@ The input size for **YOLO-NAS** can be set to either **320x320** (default) or **
 
 - The default size of **320x320** is optimized for lower CPU usage and faster inference times.
 
-##### Configuration  
+##### Configuration
 
-Below is the recommended configuration for using the **YOLO-NAS** (small) model with the MemryX detector:  
+Below is the recommended configuration for using the **YOLO-NAS** (small) model with the MemryX detector:
 
 ```yaml
 detectors:
@@ -833,13 +868,13 @@ model:
           # └── yolonas_post.onnx    (optional; only if the model includes a cropped post-processing network)
 ```
 
-#### YOLOv9  
+#### YOLOv9
 
 The YOLOv9s model included in this detector is downloaded from [the original GitHub](https://github.com/WongKinYiu/yolov9) like in the [Models Section](#yolov9-1) and compiled to DFP with [mx_nc](https://developer.memryx.com/tools/neural_compiler.html#usage).
 
 ##### Configuration
 
-Below is the recommended configuration for using the **YOLOv9** (small) model with the MemryX detector:  
+Below is the recommended configuration for using the **YOLOv9** (small) model with the MemryX detector:
 
 ```yaml
 detectors:
@@ -848,7 +883,7 @@ detectors:
     device: PCIe:0
 
 model:
-  model_type: yolo-generic   
+  model_type: yolo-generic
   width: 320   # (Can be set to 640 for higher resolution)
   height: 320  # (Can be set to 640 for higher resolution)
   input_tensor: nchw
@@ -861,13 +896,13 @@ model:
           # └── yolov9_post.onnx    (optional; only if the model includes a cropped post-processing network)
 ```
 
-#### YOLOX  
+#### YOLOX
 
 The model is sourced from the [OpenCV Model Zoo](https://github.com/opencv/opencv_zoo) and precompiled to DFP.
 
-##### Configuration  
+##### Configuration
 
-Below is the recommended configuration for using the **YOLOX** (small) model with the MemryX detector:  
+Below is the recommended configuration for using the **YOLOX** (small) model with the MemryX detector:
 
 ```yaml
 detectors:
@@ -888,13 +923,13 @@ model:
           # ├── yolox.dfp          (a file ending with .dfp)
 ```
 
-#### SSDLite MobileNet v2  
+#### SSDLite MobileNet v2
 
 The model is sourced from the [OpenMMLab Model Zoo](https://mmdeploy-oss.openmmlab.com/model/mmdet-det/ssdlite-e8679f.onnx) and has been converted to DFP.
 
-##### Configuration  
+##### Configuration
 
-Below is the recommended configuration for using the **SSDLite MobileNet v2** model with the MemryX detector:  
+Below is the recommended configuration for using the **SSDLite MobileNet v2** model with the MemryX detector:
 
 ```yaml
 detectors:
@@ -1027,6 +1062,41 @@ model:
   input_pixel_format: rgb
   width: 320 # MUST match the chosen model i.e yolov7-320 -> 320, yolov4-416 -> 416
   height: 320 # MUST match the chosen model i.e yolov7-320 -> 320 yolov4-416 -> 416
+```
+
+## Synaptics
+
+Hardware accelerated object detection is supported on the following SoCs:
+
+- SL1680
+
+This implementation uses the [Synaptics model conversion](https://synaptics-synap.github.io/doc/v/latest/docs/manual/introduction.html#offline-model-conversion), version v3.1.0.
+
+This implementation is based on sdk `v1.5.0`.
+
+See the [installation docs](../frigate/installation.md#synaptics) for information on configuring the SL-series NPU hardware.
+
+### Configuration
+
+When configuring the Synap detector, you have to specify the model: a local **path**.
+
+#### SSD Mobilenet
+
+A synap model is provided in the container at /mobilenet.synap and is used by this detector type by default. The model comes from [Synap-release Github](https://github.com/synaptics-astra/synap-release/tree/v1.5.0/models/dolphin/object_detection/coco/model/mobilenet224_full80).
+
+Use the model configuration shown below when using the synaptics detector with the default synap model:
+
+```yaml
+detectors:  # required
+  synap_npu:  # required
+    type: synaptics  # required
+
+model:  # required
+  path: /synaptics/mobilenet.synap  # required
+  width: 224  # required
+  height: 224  # required
+  tensor_format: nhwc  # default value (optional. If you change the model, it is required)
+  labelmap_path: /labelmap/coco-80.txt  # required
 ```
 
 ## Rockchip platform
@@ -1303,26 +1373,29 @@ Here are some tips for getting different model types
 
 ### Downloading D-FINE Model
 
-To export as ONNX:
+D-FINE can be exported as ONNX by running the command below. You can copy and paste the whole thing to your terminal and execute, altering `MODEL_SIZE=s` in the first line to `s`, `m`, or `l` size.
 
-1. Clone: https://github.com/Peterande/D-FINE and install all dependencies.
-2. Select and download a checkpoint from the [readme](https://github.com/Peterande/D-FINE).
-3. Modify line 58 of `tools/deployment/export_onnx.py` and change batch size to 1: `data = torch.rand(1, 3, 640, 640)`
-4. Run the export, making sure you select the right config, for your checkpoint.
-
-Example:
-
+```sh
+docker build . --build-arg MODEL_SIZE=s --output . -f- <<'EOF'
+FROM python:3.11 AS build
+RUN apt-get update && apt-get install --no-install-recommends -y libgl1 && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /bin/
+WORKDIR /dfine
+RUN git clone https://github.com/Peterande/D-FINE.git .
+RUN uv pip install --system -r requirements.txt
+RUN uv pip install --system onnx onnxruntime onnxsim
+# Create output directory and download checkpoint
+RUN mkdir -p output
+ARG MODEL_SIZE
+RUN wget https://github.com/Peterande/storage/releases/download/dfinev1.0/dfine_${MODEL_SIZE}_obj2coco.pth -O output/dfine_${MODEL_SIZE}_obj2coco.pth
+# Modify line 58 of export_onnx.py to change batch size to 1
+RUN sed -i '58s/data = torch.rand(.*)/data = torch.rand(1, 3, 640, 640)/' tools/deployment/export_onnx.py
+RUN python3 tools/deployment/export_onnx.py -c configs/dfine/objects365/dfine_hgnetv2_${MODEL_SIZE}_obj2coco.yml -r output/dfine_${MODEL_SIZE}_obj2coco.pth
+FROM scratch
+ARG MODEL_SIZE
+COPY --from=build /dfine/output/dfine_${MODEL_SIZE}_obj2coco.onnx /dfine-${MODEL_SIZE}.onnx
+EOF
 ```
-python3 tools/deployment/export_onnx.py -c configs/dfine/objects365/dfine_hgnetv2_m_obj2coco.yml -r output/dfine_m_obj2coco.pth
-```
-
-:::tip
-
-Model export has only been tested on Linux (or WSL2). Not all dependencies are in `requirements.txt`. Some live in the deployment folder, and some are still missing entirely and must be installed manually.
-
-Make sure you change the batch size to 1 before exporting.
-
-:::
 
 ### Download RF-DETR Model
 
@@ -1374,23 +1447,25 @@ python3 yolo_to_onnx.py -m yolov7-320
 
 #### YOLOv9
 
-YOLOv9 model can be exported as ONNX using the command below. You can copy and paste the whole thing to your terminal and execute, altering `MODEL_SIZE=t` in the first line to the [model size](https://github.com/WongKinYiu/yolov9#performance) you would like to convert (available sizes are `t`, `s`, `m`, `c`, and `e`).
+YOLOv9 model can be exported as ONNX using the command below. You can copy and paste the whole thing to your terminal and execute, altering `MODEL_SIZE=t` and `IMG_SIZE=320` in the first line to the [model size](https://github.com/WongKinYiu/yolov9#performance) you would like to convert (available model sizes are `t`, `s`, `m`, `c`, and `e`, common image sizes are `320` and `640`).
 
 ```sh
-docker build . --build-arg MODEL_SIZE=t --output . -f- <<'EOF'
+docker build . --build-arg MODEL_SIZE=t --build-arg IMG_SIZE=320 --output . -f- <<'EOF'
 FROM python:3.11 AS build
 RUN apt-get update && apt-get install --no-install-recommends -y libgl1 && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /bin/
 WORKDIR /yolov9
 ADD https://github.com/WongKinYiu/yolov9.git .
 RUN uv pip install --system -r requirements.txt
-RUN uv pip install --system onnx onnxruntime onnx-simplifier>=0.4.1
+RUN uv pip install --system onnx==1.18.0 onnxruntime onnx-simplifier>=0.4.1
 ARG MODEL_SIZE
+ARG IMG_SIZE
 ADD https://github.com/WongKinYiu/yolov9/releases/download/v0.1/yolov9-${MODEL_SIZE}-converted.pt yolov9-${MODEL_SIZE}.pt
 RUN sed -i "s/ckpt = torch.load(attempt_download(w), map_location='cpu')/ckpt = torch.load(attempt_download(w), map_location='cpu', weights_only=False)/g" models/experimental.py
-RUN python3 export.py --weights ./yolov9-${MODEL_SIZE}.pt --imgsz 320 --simplify --include onnx
+RUN python3 export.py --weights ./yolov9-${MODEL_SIZE}.pt --imgsz ${IMG_SIZE} --simplify --include onnx
 FROM scratch
 ARG MODEL_SIZE
-COPY --from=build /yolov9/yolov9-${MODEL_SIZE}.onnx /
+ARG IMG_SIZE
+COPY --from=build /yolov9/yolov9-${MODEL_SIZE}.onnx /yolov9-${MODEL_SIZE}-${IMG_SIZE}.onnx
 EOF
 ```

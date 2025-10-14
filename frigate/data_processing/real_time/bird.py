@@ -42,10 +42,13 @@ class BirdRealTimeProcessor(RealTimeProcessorApi):
         self.detected_birds: dict[str, float] = {}
         self.labelmap: dict[int, str] = {}
 
+        GITHUB_RAW_ENDPOINT = os.environ.get(
+            "GITHUB_RAW_ENDPOINT", "https://raw.githubusercontent.com"
+        )
         download_path = os.path.join(MODEL_CACHE_DIR, "bird")
         self.model_files = {
-            "bird.tflite": "https://raw.githubusercontent.com/google-coral/test_data/master/mobilenet_v2_1.0_224_inat_bird_quant.tflite",
-            "birdmap.txt": "https://raw.githubusercontent.com/google-coral/test_data/master/inat_bird_labels.txt",
+            "bird.tflite": f"{GITHUB_RAW_ENDPOINT}/google-coral/test_data/master/mobilenet_v2_1.0_224_inat_bird_quant.tflite",
+            "birdmap.txt": f"{GITHUB_RAW_ENDPOINT}/google-coral/test_data/master/inat_bird_labels.txt",
         }
 
         if not all(
@@ -128,7 +131,11 @@ class BirdRealTimeProcessor(RealTimeProcessorApi):
         ]
 
         if input.shape != (224, 224):
-            input = cv2.resize(input, (224, 224))
+            try:
+                input = cv2.resize(input, (224, 224))
+            except Exception:
+                logger.warning("Failed to resize image for bird classification")
+                return
 
         input = np.expand_dims(input, axis=0)
         self.interpreter.set_tensor(self.tensor_input_details[0]["index"], input)

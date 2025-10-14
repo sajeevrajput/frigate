@@ -19,7 +19,7 @@ from frigate.util.builtin import (
 
 from ..base import FrigateBaseModel
 from ..classification import (
-    AudioTranscriptionConfig,
+    CameraAudioTranscriptionConfig,
     CameraFaceRecognitionConfig,
     CameraLicensePlateRecognitionConfig,
     CameraSemanticSearchConfig,
@@ -69,8 +69,9 @@ class CameraConfig(FrigateBaseModel):
     audio: AudioConfig = Field(
         default_factory=AudioConfig, title="Audio events configuration."
     )
-    audio_transcription: AudioTranscriptionConfig = Field(
-        default_factory=AudioTranscriptionConfig, title="Audio transcription config."
+    audio_transcription: CameraAudioTranscriptionConfig = Field(
+        default_factory=CameraAudioTranscriptionConfig,
+        title="Audio transcription config.",
     )
     birdseye: BirdseyeCameraConfig = Field(
         default_factory=BirdseyeCameraConfig, title="Birdseye camera configuration."
@@ -234,6 +235,7 @@ class CameraConfig(FrigateBaseModel):
                 self.detect.fps,
                 self.detect.width,
                 self.detect.height,
+                self.ffmpeg.gpu,
             )
             or ffmpeg_input.hwaccel_args
             or parse_preset_hardware_acceleration_decode(
@@ -241,6 +243,7 @@ class CameraConfig(FrigateBaseModel):
                 self.detect.fps,
                 self.detect.width,
                 self.detect.height,
+                self.ffmpeg.gpu,
             )
             or camera_arg
             or []

@@ -80,18 +80,7 @@ DEFAULT_CONFIG = """
 mqtt:
   enabled: False
 
-cameras:
-  name_of_your_camera: # <------ Name the camera
-    enabled: True
-    ffmpeg:
-      inputs:
-        - path: rtsp://10.0.10.10:554/rtsp # <----- The stream you want to use for detection
-          roles:
-            - detect
-    detect:
-      enabled: False # <---- disable detection until you have a working camera feed
-      width: 1280
-      height: 720
+cameras: {}  # No cameras defined, UI wizard should be used
 """
 
 DEFAULT_DETECTORS = {"cpu": {"type": "cpu"}}
@@ -718,6 +707,18 @@ class FrigateConfig(FrigateBaseModel):
             logger.warning(
                 "Frigate+ is configured but clean snapshots are not enabled, submissions to Frigate+ will not be possible./"
             )
+
+        # Validate auth roles against cameras
+        camera_names = set(self.cameras.keys())
+
+        for role, allowed_cameras in self.auth.roles.items():
+            invalid_cameras = [
+                cam for cam in allowed_cameras if cam not in camera_names
+            ]
+            if invalid_cameras:
+                logger.warning(
+                    f"Role '{role}' references non-existent cameras: {invalid_cameras}. "
+                )
 
         return self
 

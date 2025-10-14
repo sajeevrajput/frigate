@@ -268,6 +268,8 @@ ffmpeg:
   retry_interval: 10
   # Optional: Set tag on HEVC (H.265) recording stream to improve compatibility with Apple players. (default: shown below)
   apple_compatibility: false
+  # Optional: Set the index of the GPU to use for hardware acceleration. (default: shown below)
+  gpu: 0
 
 # Optional: Detect configuration
 # NOTE: Can be overridden at the camera level
@@ -287,6 +289,9 @@ detect:
   max_disappeared: 25
   # Optional: Configuration for stationary object tracking
   stationary:
+    # Optional: Stationary classifier that uses visual characteristics to determine if an object
+    # is stationary even if the box changes enough to be considered motion (default: shown below).
+    classifier: True
     # Optional: Frequency for confirming stationary objects (default: same as threshold)
     # When set to 1, object detection will run to confirm the object still exists on every frame.
     # If set to 10, object detection will run to confirm the object still exists on every 10th frame.
@@ -661,6 +666,8 @@ lpr:
   enhancement: 0
   # Optional: Save plate images to /media/frigate/clips/lpr for debugging purposes (default: shown below)
   debug_save_plates: False
+  # Optional: List of regex replacement rules to normalize detected plates (default: shown below)
+  replace_rules: {}
 
 # Optional: Configuration for AI generated tracked object descriptions
 # WARNING: Depending on the provider, this will send thumbnails over the internet
@@ -695,7 +702,7 @@ audio_transcription:
   language: en
 
 # Optional: Restream configuration
-# Uses https://github.com/AlexxIT/go2rtc (v1.9.9)
+# Uses https://github.com/AlexxIT/go2rtc (v1.9.10)
 # NOTE: The default go2rtc API port (1984) must be used,
 #       changing this port for the integrated go2rtc instance is not supported.
 go2rtc:
@@ -907,6 +914,8 @@ cameras:
       trigger_name:
         # Required: Enable or disable the trigger. (default: shown below)
         enabled: true
+        # Optional: A friendly name or descriptive text for the trigger
+        friendly_name: Unique name or descriptive text
         # Type of trigger, either `thumbnail` for image-based matching or `description` for text-based matching. (default: none)
         type: thumbnail
         # Reference data for matching, either an event ID for `thumbnail` or a text string for `description`. (default: none)
