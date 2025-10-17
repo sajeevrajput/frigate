@@ -57,6 +57,7 @@ import {
 } from "react-icons/fa";
 import { GiSpeaker, GiSpeakerOff } from "react-icons/gi";
 import {
+  TbCameraDown,
   TbRecordMail,
   TbRecordMailOff,
   TbViewfinder,
@@ -107,11 +108,19 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { useIsAdmin } from "@/hooks/use-is-admin";
-import { Trans, useTranslation } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { useDocDomain } from "@/hooks/use-doc-domain";
 import PtzControlPanel from "@/components/overlay/PtzControlPanel";
 import ObjectSettingsView from "../settings/ObjectSettingsView";
 import { useSearchEffect } from "@/hooks/use-overlay-state";
+import {
+  downloadSnapshot,
+  fetchCameraSnapshot,
+  generateSnapshotFilename,
+  grabVideoSnapshot,
+  SnapshotResult,
+} from "@/utils/snapshotUtil";
+import ActivityIndicator from "@/components/indicators/activity-indicator";
 
 type LiveCameraViewProps = {
   config?: FrigateConfig;
@@ -703,42 +712,6 @@ export default function LiveCameraView({
   );
 }
 
-function OnDemandRetentionMessage({ camera }: { camera: CameraConfig }) {
-  const { t } = useTranslation(["views/live", "views/events"]);
-  const rankMap = { all: 0, motion: 1, active_objects: 2 };
-  const getValidMode = (retain?: { mode?: string }): keyof typeof rankMap => {
-    const mode = retain?.mode;
-    return mode && mode in rankMap ? (mode as keyof typeof rankMap) : "all";
-  };
-
-  const recordRetainMode = getValidMode(camera.record.retain);
-  const alertsRetainMode = getValidMode(camera.review.alerts.retain);
-
-  const effectiveRetainMode =
-    rankMap[alertsRetainMode] < rankMap[recordRetainMode]
-      ? recordRetainMode
-      : alertsRetainMode;
-
-  const source = effectiveRetainMode === recordRetainMode ? "camera" : "alerts";
-
-  return effectiveRetainMode !== "all" ? (
-    <div>
-      <Trans
-        ns="views/live"
-        values={{
-          source,
-          effectiveRetainMode,
-          effectiveRetainModeName: t(
-            "effectiveRetainMode.modes." + effectiveRetainMode,
-          ),
-        }}
-      >
-        effectiveRetainMode.notAllTips
-      </Trans>
-    </div>
-  ) : null;
-}
-
 type FrigateCameraFeaturesProps = {
   camera: CameraConfig;
   recordingEnabled: boolean;
@@ -832,11 +805,10 @@ function FrigateCameraFeatures({
         const toastId = toast.success(
           <div className="flex flex-col space-y-3">
             <div className="font-semibold">{t("manualRecording.started")}</div>
-            {!camera.record.enabled || camera.record.alerts.retain.days == 0 ? (
-              <div>{t("manualRecording.recordDisabledTips")}</div>
-            ) : (
-              <OnDemandRetentionMessage camera={camera} />
-            )}
+            {!camera.record.enabled ||
+              (camera.record.alerts.retain.days == 0 && (
+                <div>{t("manualRecording.recordDisabledTips")}</div>
+              ))}
           </div>,
           {
             position: "top-center",
@@ -881,6 +853,34 @@ function FrigateCameraFeatures({
       createEvent();
     }
   }, [createEvent, endEvent, isRecording]);
+
+  const [isSnapshotLoading, setIsSnapshotLoading] = useState(false);
+
+  const handleSnapshotClick = useCallback(async () => {
+    setIsSnapshotLoading(true);
+    try {
+      let result: SnapshotResult;
+
+      if (isRestreamed && preferredLiveMode !== "jsmpeg") {
+        // For restreamed streams with video elements (MSE/WebRTC), grab directly from video element
+        result = await grabVideoSnapshot();
+      } else {
+        // For detect stream or JSMpeg players, use the API endpoint
+        result = await fetchCameraSnapshot(camera.name);
+      }
+
+      if (result.success) {
+        const { dataUrl } = result.data;
+        const filename = generateSnapshotFilename(camera.name);
+        downloadSnapshot(dataUrl, filename);
+        toast.success(t("snapshot.downloadStarted"));
+      } else {
+        toast.error(t("snapshot.captureFailed"));
+      }
+    } finally {
+      setIsSnapshotLoading(false);
+    }
+  }, [camera.name, isRestreamed, preferredLiveMode, t]);
 
   useEffect(() => {
     // ensure manual event is stopped when component unmounts
@@ -1015,6 +1015,16 @@ function FrigateCameraFeatures({
           title={t("manualRecording." + (isRecording ? "stop" : "start"))}
           onClick={handleEventButtonClick}
           disabled={!cameraEnabled || debug}
+        />
+        <CameraFeatureToggle
+          className="p-2 md:p-0"
+          variant={fullscreen ? "overlay" : "primary"}
+          Icon={TbCameraDown}
+          isActive={false}
+          title={t("snapshot.takeSnapshot")}
+          onClick={handleSnapshotClick}
+          disabled={!cameraEnabled || debug || isSnapshotLoading}
+          loading={isSnapshotLoading}
         />
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger>
@@ -1584,16 +1594,28 @@ function FrigateCameraFeatures({
             <div className="mb-1 text-sm font-medium leading-none">
               {t("manualRecording.title")}
             </div>
-            <Button
-              onClick={handleEventButtonClick}
-              className={cn(
-                "w-full",
-                isRecording && "animate-pulse bg-red-500 hover:bg-red-600",
-              )}
-              disabled={debug}
-            >
-              {t("manualRecording." + (isRecording ? "end" : "start"))}
-            </Button>
+            <div className="flex flex-row items-stretch gap-2">
+              <Button
+                onClick={handleSnapshotClick}
+                disabled={!cameraEnabled || debug || isSnapshotLoading}
+                className="h-auto w-full whitespace-normal"
+              >
+                {isSnapshotLoading && (
+                  <ActivityIndicator className="mr-2 size-4" />
+                )}
+                {t("snapshot.takeSnapshot")}
+              </Button>
+              <Button
+                onClick={handleEventButtonClick}
+                className={cn(
+                  "h-auto w-full whitespace-normal",
+                  isRecording && "animate-pulse bg-red-500 hover:bg-red-600",
+                )}
+                disabled={debug}
+              >
+                {t("manualRecording." + (isRecording ? "end" : "start"))}
+              </Button>
+            </div>
             <p className="text-sm text-muted-foreground">
               {t("manualRecording.tips")}
             </p>
