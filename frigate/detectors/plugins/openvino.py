@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 import queue
-
+from datetime import datetime
 import numpy as np
 import openvino as ov
 import openvino.properties.hint as hints
@@ -53,7 +53,7 @@ class OvDetector(DetectionApi):
             model_path=detector_config.model.path,
             device=detector_config.device,
             model_type=detector_config.model.model_type,
-            async_mode=True,
+            # async_mode=True,
             async_callback=self.callback
         )
         logger.info("Performance Hint: %s", self.runner.compiled_model.get_property("PERFORMANCE_HINT"))
@@ -143,7 +143,9 @@ class OvDetector(DetectionApi):
             (pos[0] + (pos[2] / 2)) / self.w,  # x_max
         ]
 
-    def detect_raw(self, tensor_input):
+    def detect_raw(self, data):
+        t0 = datetime.now().timestamp()
+        tensor_input, connection_id, frame_name = data
         if self.runner.is_async:
             # inference is done by async_runner thread with post processing handled in callback
             return
@@ -208,7 +210,9 @@ class OvDetector(DetectionApi):
                 ]
             return detections
         elif self.ov_model_type == ModelTypeEnum.yologeneric:
-            return post_process_yolo(outputs, self.w, self.h)
+            res = post_process_yolo(outputs, self.w, self.h), connection_id, frame_name
+            logger.info(f"OpenVINO YOLO Generic detection for {frame_name} took {datetime.now().timestamp() - t0:.3f}s")
+            return res
         elif self.ov_model_type == ModelTypeEnum.yolox:
             # [x, y, h, w, box_score, class_no_1, ..., class_no_80],
             results = outputs[0]

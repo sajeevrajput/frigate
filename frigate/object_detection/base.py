@@ -90,9 +90,10 @@ class BaseLocalDetector(ObjectDetector):
 
 
 class LocalObjectDetector(BaseLocalDetector):
-    def detect_raw(self, tensor_input: np.ndarray):
+    def detect_raw(self, data):
+        tensor_input, connection_id, frame_name = data
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.detect_raw(tensor_input=tensor_input)
+        return self.detect_api.detect_raw(data=(tensor_input, connection_id, frame_name))
 
 
 class AsyncLocalObjectDetector(BaseLocalDetector):
@@ -142,7 +143,7 @@ class DetectorRunner(FrigateProcess):
 
         while not self.stop_event.is_set():
             try:
-                connection_id = self.detection_queue.get(timeout=1)
+                connection_id, frame_name = self.detection_queue.get(timeout=1)
             except queue.Empty:
                 continue
             input_frame = frame_manager.get(
@@ -161,10 +162,11 @@ class DetectorRunner(FrigateProcess):
 
             # detect and send the output
             self.start_time.value = datetime.datetime.now().timestamp()
-            detections = object_detector.detect_raw(input_frame)
+            rec = object_detector.detect_raw([input_frame, connection_id, frame_name])
+            detections, conn_rec_id, frame_name_rec = rec
             duration = datetime.datetime.now().timestamp() - self.start_time.value
             logger.info(
-                f"Inference took {duration:.3f}s"
+                f"{self.name}: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name} rec frame: {frame_name_rec}"
             )
             frame_manager.close(connection_id)
 
@@ -328,8 +330,8 @@ class ObjectDetectProcess:
             self.stop()
 
         # Async path for MemryX
-        # if self.detector_config.type == "memryx":
-        if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
+        if self.detector_config.type == "memryx":
+        # if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
             logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
                 f"frigate.detector:{self.name}",
@@ -380,7 +382,8 @@ class RemoteObjectDetector:
         self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         self.detector_subscriber = ObjectDetectorSubscriber(name)
 
-    def detect(self, tensor_input, threshold=0.4):
+    def detect(self, data, threshold=0.4):
+        tensor_input, frame_name = data
         detections = []
 
         if self.stop_event.is_set():
@@ -388,8 +391,10 @@ class RemoteObjectDetector:
 
         # copy input to shared memory
         self.np_shm[:] = tensor_input[:]
-        self.detection_queue.put(self.name)
+        self.detection_queue.put((self.name, frame_name))
+        t0=datetime.datetime.now().timestamp()
         result = self.detector_subscriber.check_for_update()
+        logger.info(f"1.detect(remoteOD): Waiting for frame {frame_name} results took {datetime.datetime.now().timestamp()-t0:.3f}s")
 
         # if it timed out
         if result is None:

@@ -1,12 +1,14 @@
 """Facilitates communication between processes for object detection signals."""
 
 import threading
-
+import logging
+from datetime import datetime
 import zmq
 
 SOCKET_PUB = "ipc:///tmp/cache/detector_pub"
 SOCKET_SUB = "ipc:///tmp/cache/detector_sub"
 
+logger = logging.getLogger(__name__)
 
 class ZmqProxyRunner(threading.Thread):
     def __init__(self, context: zmq.Context[zmq.Socket]) -> None:
@@ -78,7 +80,9 @@ class ObjectDetectorSubscriber:
     def check_for_update(self, timeout: float = 5) -> str | None:
         """Returns message or None if no update."""
         try:
+            t0 = datetime.now().timestamp()
             has_update, _, _ = zmq.select([self.socket], [], [], timeout)
+            logger.info(f"[{datetime.now().timestamp():.4f}]: Got updates on topic: {self.topic} in {datetime.now().timestamp() - t0:.3f}s")
 
             if has_update:
                 return self.socket.recv_string(flags=zmq.NOBLOCK)

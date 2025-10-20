@@ -651,11 +651,14 @@ def detect(
     region,
     objects_to_track,
     object_filters,
+    frame_name: str,
 ):
     tensor_input = create_tensor_input(frame, model_config, region)
 
     detections = []
-    region_detections = object_detector.detect(tensor_input)
+    t0=datetime.now().timestamp()
+    region_detections = object_detector.detect((tensor_input,frame_name))
+    logger.info(f"1.detect(video): Detection for {frame_name} took {datetime.now().timestamp()-t0:.4f} seconds")
     for d in region_detections:
         box = d[2]
         size = region[2] - region[0]
@@ -742,6 +745,7 @@ def process_frames(
         ]
 
     while not stop_event.is_set():
+        t0=datetime.now().timestamp()
         updated_configs = config_subscriber.check_for_updates()
 
         if "enabled" in updated_configs:
@@ -784,6 +788,7 @@ def process_frames(
             next_region_update = get_tomorrow_at_time(2)
 
         try:
+            t1=datetime.now().timestamp()
             if exit_on_empty:
                 frame_name, frame_time = frame_queue.get(False)
             else:
@@ -792,7 +797,9 @@ def process_frames(
             if exit_on_empty:
                 logger.info("Exiting track_objects...")
                 break
+            logger.warning(f"Frame queue for {camera_config.name} is empty")
             continue
+        logger.info(f"0.process_frame: {frame_name} {frame_time} Got frame from queue in {datetime.now().timestamp()-t1:.4f} seconds")
 
         camera_metrics.detection_frame.value = frame_time
         ptz_metrics.frame_time.value = frame_time
@@ -892,6 +899,7 @@ def process_frames(
                         for candidate in motion_clusters
                     ]
                     regions += motion_regions
+            regions = [(475, 360, 1171, 1056)]
 
             # if starting up, get the next startup scan region
             if startup_scan:
@@ -902,7 +910,7 @@ def process_frames(
                 startup_scan = False
 
             # resize regions and detect
-            # seed with stationary objects
+            # seed with stationary objects            
             detections = [
                 (
                     obj["label"],
@@ -915,7 +923,8 @@ def process_frames(
                 for obj in object_tracker.tracked_objects.values()
                 if obj["id"] in stationary_object_ids
             ]
-
+            t2=datetime.now().timestamp()            
+            logger.info(f"1.process_frame: {frame_name} {frame_time} Detecting in {len(regions)} regions")
             for region in regions:
                 detections.extend(
                     detect(
@@ -926,8 +935,11 @@ def process_frames(
                         region,
                         camera_config.objects.track,
                         camera_config.objects.filters,
+                        frame_name
                     )
                 )
+            t3=datetime.now().timestamp()
+            logger.info(f"2.process_frame: {frame_name} {frame_time} Detection took {t3-t2:.4f} seconds")
 
             consolidated_detections = reduce_detections(frame_shape, detections)
 
@@ -1063,6 +1075,9 @@ def process_frames(
             )
             camera_metrics.detection_fps.value = object_detector.fps.eps()
             frame_manager.close(frame_name)
+            t4=datetime.now().timestamp()
+            logger.info(f"3.process_frame: {frame_name} {frame_time} post detection took {t4-t3:.4f} seconds")
+            logger.info(f"4.process_frame: {frame_name} {frame_time} Total processing time {t4-t0:.4f} seconds")
 
     motion_detector.stop()
     requestor.stop()
