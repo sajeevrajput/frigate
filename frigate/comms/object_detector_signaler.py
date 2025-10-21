@@ -76,6 +76,7 @@ class ObjectDetectorSubscriber:
         self.socket = self.context.socket(zmq.SUB)
         self.socket.setsockopt_string(zmq.SUBSCRIBE, self.topic)
         self.socket.connect(SOCKET_SUB)
+        logger.info(f"ObjectDetectorSubscriber subscribed to topic: {self.topic}")
 
     def check_for_update(self, timeout: float = 5) -> str | None:
         """Returns message or None if no update."""

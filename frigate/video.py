@@ -658,7 +658,7 @@ def detect(
     detections = []
     t0=datetime.now().timestamp()
     region_detections = object_detector.detect((tensor_input,frame_name))
-    logger.info(f"1.detect(video): Detection for {frame_name} took {datetime.now().timestamp()-t0:.4f} seconds")
+    logger.info(f"1.detect(video): Detection for {frame_name} took {datetime.now().timestamp()-t0:.4f} seconds")    # includes frame-frame from same camera (adds latency because of other intermediate camera frames)
     for d in region_detections:
         box = d[2]
         size = region[2] - region[0]

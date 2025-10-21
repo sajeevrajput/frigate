@@ -2,8 +2,10 @@
 
 import logging
 import os
+from datetime import datetime
 import platform
 import threading
+import multiprocessing as mp
 import queue
 from abc import ABC, abstractmethod
 from typing import Any
@@ -256,9 +258,9 @@ class OpenVINOModelRunner(BaseModelRunner):
             self.infer_request = ov.AsyncInferQueue(self.compiled_model)    # auto create pool of async infer requests
             self.infer_request.set_callback(self.async_callback)
 
-            self.input_store = queue.Queue()
-            self.response_store = queue.Queue()
-            # self.request_ids = queue.Queue(maxsize=1000)    # to track sent request_ids for retrieval of results
+            self.input_store = mp.Queue()
+            self.response_store = mp.Queue()
+            # self.request_ids = mp.Queue(maxsize=1000)    # to track sent request_ids for retrieval of results
 
             # start async runner thread to wait for input and process results
             self.async_infer_thread = threading.Thread(target=self._async_runner, daemon=True)
@@ -304,15 +306,17 @@ class OpenVINOModelRunner(BaseModelRunner):
 
     def _async_runner(self) -> None:
         while True:
+            t0= datetime.now().timestamp()
             try:
-                input_data_dict, connection_id = self.input_store.get()
+                input_data_dict, connection_id, frame_name, sent_time = self.input_store.get()
             except queue.Empty:
                 logger.warning("Input queue empty, continuing")
                 continue
             # connection_id is unique to a camera. all subsequent frames from a camera will have the same connection_id.
             # this also means you cannot send multiple frames from the same camera at the same time, as the connection_id will be overwritten in the response_store
             # But as of now, the RemoteObjectDetector only sends one frame at a time per camera, so this is not an issue.
-            self.infer_request.start_async(input_data_dict, userdata=connection_id)
+            logger.info(f"[{datetime.now().timestamp():.4f}]: Time from input_store till start async inference for frame {frame_name} on connection {connection_id} in {datetime.now().timestamp() - t0:.3f}s")
+            self.infer_request.start_async(input_data_dict, userdata=(connection_id, frame_name, datetime.now().timestamp(), sent_time))
 
     def run(self, inputs: dict[str, Any]) -> list[np.ndarray]:
         """Run inference with the model.

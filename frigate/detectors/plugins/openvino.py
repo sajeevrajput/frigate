@@ -53,7 +53,7 @@ class OvDetector(DetectionApi):
             model_path=detector_config.model.path,
             device=detector_config.device,
             model_type=detector_config.model.model_type,
-            # async_mode=True,
+            async_mode=True,
             async_callback=self.callback
         )
         logger.info("Performance Hint: %s", self.runner.compiled_model.get_property("PERFORMANCE_HINT"))
@@ -211,7 +211,7 @@ class OvDetector(DetectionApi):
             return detections
         elif self.ov_model_type == ModelTypeEnum.yologeneric:
             res = post_process_yolo(outputs, self.w, self.h), connection_id, frame_name
-            logger.info(f"OpenVINO YOLO Generic detection for {frame_name} took {datetime.now().timestamp() - t0:.3f}s")
+            logger.info(f"{[datetime.now().timestamp()]} OpenVINO YOLO Generic detection for {frame_name} took {datetime.now().timestamp() - t0:.3f}s")
             return res
         elif self.ov_model_type == ModelTypeEnum.yolox:
             # [x, y, h, w, box_score, class_no_1, ..., class_no_80],
@@ -240,8 +240,9 @@ class OvDetector(DetectionApi):
                     object_detected[6], object_detected[5], object_detected[:4]
                 )
             return detections
-    
-    def send_input(self, connection_id, tensor_input):
+
+    def send_input(self, connection_id, tensor_input, frame_name, sent_time):
+        t0= datetime.now().timestamp()
         # TODO Invalid model ???
         if self.ov_model_type == ModelTypeEnum.dfine:
             # Use named inputs for dfine models
@@ -253,21 +254,26 @@ class OvDetector(DetectionApi):
             inputs = {self.runner.get_input_names()[0]: tensor_input}
         # logger.warning(f"Submitting request {connection_id} to inference queue. type of connection_id is {type(connection_id)}")
         # request_id = self.input_store.put(input_tensor) #TODO do I need to worry about order since connection_id is enough
-        self.runner.input_store.put((inputs,connection_id))
+        self.runner.input_store.put((inputs, connection_id, frame_name, sent_time))
+        logger.info(f"[{datetime.now().timestamp():.4f}]: Sent input tensor for frame {frame_name} in {datetime.now().timestamp() - t0:.3f}s")
+        
         # self.request_ids.put((request_id, connection_id))
         # return request_id
     
     def receive_output(self, timeout=5):
+        t0= datetime.now().timestamp()
         try:
             # request_id, connection_id = self.request_ids.get()
-            connection_id, output_tensor = self.runner.response_store.get(True, timeout=timeout)
-            return connection_id, output_tensor
+            connection_id, output_tensor, frame_name, inf_time,sent_time = self.runner.response_store.get(True, timeout=timeout)
+            logger.info(f"[{datetime.now().timestamp():.4f}]: Received output tensor for frame {frame_name} in {datetime.now().timestamp() - t0:.3f}s")
+            return connection_id, output_tensor, frame_name, inf_time,sent_time
         except TimeoutError:
             logger.error(f"Timeout waiting for inference result for request {request_id}")
-            return None, np.zeros((20, 6), np.float32)
-        
-    def callback(self, infer_request, connection_id):
-        
+            return None, np.zeros((20, 6), np.float32), None, None,None
+
+    def callback(self, infer_request, userdata):
+        connection_id, frame_name, start_time, sent_time = userdata
+        t0= datetime.now().timestamp()        
         detections = np.zeros((20, 6), np.float32)
         
         # if self.model_invalid:
@@ -353,8 +359,8 @@ class OvDetector(DetectionApi):
                     object_detected[6], object_detected[5], object_detected[:4]
                 )
             processed_output = detections
-
-        self.runner.response_store.put((connection_id, processed_output))
+        logger.info(f"[{datetime.now().timestamp():.4f}]: Completed post-processing for frame {frame_name} in {datetime.now().timestamp() - t0:.3f}s")  
+        self.runner.response_store.put((connection_id, processed_output, frame_name, datetime.now().timestamp() - start_time, sent_time))
             
 # class OvAsyncDetector(DetectionApi):
 #     type_key = "DETECTOR_KEY"

@@ -97,9 +97,11 @@ class LocalObjectDetector(BaseLocalDetector):
 
 
 class AsyncLocalObjectDetector(BaseLocalDetector):
-    def async_send_input(self, tensor_input: np.ndarray, connection_id: str):
+    def async_send_input(self, tensor_input: np.ndarray, connection_id: str, frame_name: str, sent_time):
+        t0 = datetime.datetime.now().timestamp()
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.send_input(connection_id, tensor_input)
+        logger.info(f"[{datetime.datetime.now().timestamp():.4f}]: Transformed input tensor for frame {frame_name} in {datetime.datetime.now().timestamp() - t0:.3f}s")
+        return self.detect_api.send_input(connection_id, tensor_input, frame_name, sent_time)
 
     def async_receive_output(self):
         return self.detect_api.receive_output()
@@ -217,7 +219,7 @@ class AsyncDetectorRunner(FrigateProcess):
         logger.info("Starting Detect Worker Thread")
         while not self.stop_event.is_set():
             try:
-                connection_id = self.detection_queue.get(timeout=1)
+                connection_id, frame_name = self.detection_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
@@ -236,21 +238,25 @@ class AsyncDetectorRunner(FrigateProcess):
                 continue
 
             # mark start time and send to accelerator
-            self.send_times.append(time.perf_counter())
-            self._detector.async_send_input(input_frame, connection_id)
+            self.send_times.append((time.perf_counter(), frame_name))
+            logger.info(
+                f"[{datetime.datetime.now().timestamp()}] _detect_worker: Sending frame {frame_name} for detection on connection {connection_id}"
+            )
+            self._detector.async_send_input(input_frame, connection_id, frame_name, datetime.datetime.now().timestamp())
 
     def _result_worker(self) -> None:
         logger.info("Starting Result Worker Thread")
         while not self.stop_event.is_set():
-            connection_id, detections = self._detector.async_receive_output()
+            connection_id, detections, frame_name, inf_time, sent_time = self._detector.async_receive_output()
 
             if not self.send_times:
                 # guard; shouldn't happen if send/recv are balanced
+                logger.warning("No send times to match inference result")
                 continue
-            ts = self.send_times.popleft()
+            ts, poped_frame_name = self.send_times.popleft()
             duration = time.perf_counter() - ts
             logger.info(
-                f"Inference took {duration:.3f}s"
+                f"[{datetime.datetime.now().timestamp():.4f}]: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name}, inf time: {inf_time:.3f}s. popped frame: {poped_frame_name}, sent time: {sent_time:.3f}s, sent time delta: {datetime.datetime.now().timestamp() - sent_time:.3f}s"
             )
 
             # release input buffer
@@ -330,8 +336,8 @@ class ObjectDetectProcess:
             self.stop()
 
         # Async path for MemryX
-        if self.detector_config.type == "memryx":
-        # if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
+        # if self.detector_config.type == "memryx":
+        if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
             logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
                 f"frigate.detector:{self.name}",
@@ -383,6 +389,7 @@ class RemoteObjectDetector:
         self.detector_subscriber = ObjectDetectorSubscriber(name)
 
     def detect(self, data, threshold=0.4):
+        # this function is called for each camera in its respective process
         tensor_input, frame_name = data
         detections = []
 
@@ -393,8 +400,10 @@ class RemoteObjectDetector:
         self.np_shm[:] = tensor_input[:]
         self.detection_queue.put((self.name, frame_name))
         t0=datetime.datetime.now().timestamp()
+        logger.info(f"{[t0]} 0.detect(remoteOD): Sent frame {frame_name} for detection")
         result = self.detector_subscriber.check_for_update()
-        logger.info(f"1.detect(remoteOD): Waiting for frame {frame_name} results took {datetime.datetime.now().timestamp()-t0:.3f}s")
+        # time.sleep(1)  # yield to allow other threads to run
+        logger.info(f"{[datetime.datetime.now().timestamp()]} 1.detect(remoteOD): Waiting for frame {frame_name} results took {datetime.datetime.now().timestamp()-t0:.3f}s")
 
         # if it timed out
         if result is None:
