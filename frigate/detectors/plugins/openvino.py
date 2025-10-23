@@ -254,7 +254,8 @@ class OvDetector(DetectionApi):
             inputs = {self.runner.get_input_names()[0]: tensor_input}
         # logger.warning(f"Submitting request {connection_id} to inference queue. type of connection_id is {type(connection_id)}")
         # request_id = self.input_store.put(input_tensor) #TODO do I need to worry about order since connection_id is enough
-        self.runner.input_store.put((inputs, connection_id, frame_name, sent_time))
+        # self.runner.input_store.put((inputs, connection_id, frame_name, sent_time))
+        self.runner._async_runner((inputs, connection_id, frame_name, sent_time))
         logger.info(f"[{datetime.now().timestamp():.4f}]: Sent input tensor for frame {frame_name} in {datetime.now().timestamp() - t0:.3f}s")
         
         # self.request_ids.put((request_id, connection_id))
