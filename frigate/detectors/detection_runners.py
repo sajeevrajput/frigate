@@ -304,14 +304,16 @@ class OpenVINOModelRunner(BaseModelRunner):
             except Exception:
                 return -1
 
-    def _async_runner(self) -> None:
-        while True:
+    def _async_runner(self,data) -> None:
             t0= datetime.now().timestamp()
-            try:
-                input_data_dict, connection_id, frame_name, sent_time = self.input_store.get()
-            except queue.Empty:
-                logger.warning("Input queue empty, continuing")
-                continue
+        # while True:
+        #     t0= datetime.now().timestamp()
+        #     try:
+        #         input_data_dict, connection_id, frame_name, sent_time = self.input_store.get()
+        #     except queue.Empty:
+        #         logger.warning("Input queue empty, continuing")
+        #         continue
+            input_data_dict, connection_id, frame_name, sent_time = data
             # connection_id is unique to a camera. all subsequent frames from a camera will have the same connection_id.
             # this also means you cannot send multiple frames from the same camera at the same time, as the connection_id will be overwritten in the response_store
             # But as of now, the RemoteObjectDetector only sends one frame at a time per camera, so this is not an issue.
