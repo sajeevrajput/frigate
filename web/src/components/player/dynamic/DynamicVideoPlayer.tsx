@@ -7,6 +7,7 @@ import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
 import HlsVideoPlayer, { HlsSource } from "../HlsVideoPlayer";
+import { useDetailStream } from "@/context/detail-stream-context";
 import { TimeRange } from "@/types/timeline";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { VideoResolutionType } from "@/types/live";
@@ -58,6 +59,13 @@ export default function DynamicVideoPlayer({
   const { t } = useTranslation(["components/player"]);
   const apiHost = useApiHost();
   const { data: config } = useSWR<FrigateConfig>("config");
+
+  // for detail stream context in History
+  const {
+    isDetailMode,
+    camera: contextCamera,
+    currentTime,
+  } = useDetailStream();
 
   // controlling playback
 
@@ -291,6 +299,9 @@ export default function DynamicVideoPlayer({
             setIsBuffering(true);
           }
         }}
+        isDetailMode={isDetailMode}
+        camera={contextCamera || camera}
+        currentTimeOverride={currentTime}
       />
       <PreviewPlayer
         className={cn(

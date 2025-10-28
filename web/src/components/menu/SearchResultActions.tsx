@@ -42,12 +42,13 @@ import useSWR from "swr";
 
 import { Trans, useTranslation } from "react-i18next";
 import { BsFillLightningFill } from "react-icons/bs";
+import BlurredIconButton from "../button/BlurredIconButton";
 
 type SearchResultActionsProps = {
   searchResult: SearchResult;
   findSimilar: () => void;
   refreshResults: () => void;
-  showObjectLifecycle: () => void;
+  showTrackingDetails: () => void;
   showSnapshot: () => void;
   addTrigger: () => void;
   isContextMenu?: boolean;
@@ -58,7 +59,7 @@ export default function SearchResultActions({
   searchResult,
   findSimilar,
   refreshResults,
-  showObjectLifecycle,
+  showTrackingDetails,
   showSnapshot,
   addTrigger,
   isContextMenu = false,
@@ -125,11 +126,11 @@ export default function SearchResultActions({
       )}
       {searchResult.data.type == "object" && (
         <MenuItem
-          aria-label={t("itemMenu.viewObjectLifecycle.aria")}
-          onClick={showObjectLifecycle}
+          aria-label={t("itemMenu.viewTrackingDetails.aria")}
+          onClick={showTrackingDetails}
         >
           <FaArrowsRotate className="mr-2 size-4" />
-          <span>{t("itemMenu.viewObjectLifecycle.label")}</span>
+          <span>{t("itemMenu.viewTrackingDetails.label")}</span>
         </MenuItem>
       )}
       {config?.semantic_search?.enabled && isContextMenu && (
@@ -213,11 +214,13 @@ export default function SearchResultActions({
           {config?.semantic_search?.enabled &&
             searchResult.data.type == "object" && (
               <Tooltip>
-                <TooltipTrigger>
-                  <MdImageSearch
-                    className="size-5 cursor-pointer text-primary-variant hover:text-primary"
+                <TooltipTrigger asChild>
+                  <BlurredIconButton
                     onClick={findSimilar}
-                  />
+                    aria-label={t("itemMenu.findSimilar.aria")}
+                  >
+                    <MdImageSearch className="size-5" />
+                  </BlurredIconButton>
                 </TooltipTrigger>
                 <TooltipContent>
                   {t("itemMenu.findSimilar.label")}
@@ -232,11 +235,13 @@ export default function SearchResultActions({
             searchResult.data.type == "object" &&
             !searchResult.plus_id && (
               <Tooltip>
-                <TooltipTrigger>
-                  <FrigatePlusIcon
-                    className="size-5 cursor-pointer text-primary-variant hover:text-primary"
+                <TooltipTrigger asChild>
+                  <BlurredIconButton
                     onClick={showSnapshot}
-                  />
+                    aria-label={t("itemMenu.submitToPlus.aria")}
+                  >
+                    <FrigatePlusIcon className="size-5" />
+                  </BlurredIconButton>
                 </TooltipTrigger>
                 <TooltipContent>
                   {t("itemMenu.submitToPlus.label")}
@@ -245,8 +250,10 @@ export default function SearchResultActions({
             )}
 
           <DropdownMenu>
-            <DropdownMenuTrigger>
-              <FiMoreVertical className="size-5 cursor-pointer text-primary-variant hover:text-primary" />
+            <DropdownMenuTrigger asChild>
+              <BlurredIconButton aria-label={t("itemMenu.more.aria")}>
+                <FiMoreVertical className="size-5" />
+              </BlurredIconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">{menuItems}</DropdownMenuContent>
           </DropdownMenu>

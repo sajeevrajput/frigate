@@ -5,6 +5,7 @@ import TextEntryDialog from "@/components/overlay/dialog/TextEntryDialog";
 import UploadImageDialog from "@/components/overlay/dialog/UploadImageDialog";
 import FaceSelectionDialog from "@/components/overlay/FaceSelectionDialog";
 import { Button, buttonVariants } from "@/components/ui/button";
+import BlurredIconButton from "@/components/button/BlurredIconButton";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,10 +64,6 @@ import {
 } from "react-icons/lu";
 import { toast } from "sonner";
 import useSWR from "swr";
-import SearchDetailDialog, {
-  SearchTab,
-} from "@/components/overlay/detail/SearchDetailDialog";
-import { SearchResult } from "@/types/search";
 import {
   ClassificationCard,
   GroupedClassificationCard,
@@ -686,11 +683,6 @@ function TrainingGrid({
     { ids: eventIdsQuery },
   ]);
 
-  // selection
-
-  const [selectedEvent, setSelectedEvent] = useState<Event>();
-  const [dialogTab, setDialogTab] = useState<SearchTab>("details");
-
   if (attemptImages.length == 0) {
     return (
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
@@ -701,40 +693,29 @@ function TrainingGrid({
   }
 
   return (
-    <>
-      <SearchDetailDialog
-        search={
-          selectedEvent ? (selectedEvent as unknown as SearchResult) : undefined
-        }
-        page={dialogTab}
-        setSimilarity={undefined}
-        setSearchPage={setDialogTab}
-        setSearch={(search) => setSelectedEvent(search as unknown as Event)}
-        setInputFocused={() => {}}
-      />
-
-      <div
-        ref={contentRef}
-        className="scrollbar-container flex flex-wrap gap-2 overflow-y-scroll p-1"
-      >
-        {Object.entries(faceGroups).map(([key, group]) => {
-          const event = events?.find((ev) => ev.id == key);
-          return (
+    <div
+      ref={contentRef}
+      className={cn(
+        "scrollbar-container grid grid-cols-2 gap-3 overflow-y-scroll p-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10 3xl:grid-cols-12",
+      )}
+    >
+      {Object.entries(faceGroups).map(([key, group]) => {
+        const event = events?.find((ev) => ev.id == key);
+        return (
+          <div key={key} className="aspect-square w-full">
             <FaceAttemptGroup
-              key={key}
               config={config}
               group={group}
               event={event}
               faceNames={faceNames}
               selectedFaces={selectedFaces}
               onClickFaces={onClickFaces}
-              onSelectEvent={setSelectedEvent}
               onRefresh={onRefresh}
             />
-          );
-        })}
-      </div>
-    </>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -745,7 +726,6 @@ type FaceAttemptGroupProps = {
   faceNames: string[];
   selectedFaces: string[];
   onClickFaces: (image: string[], ctrl: boolean) => void;
-  onSelectEvent: (event: Event) => void;
   onRefresh: () => void;
 };
 function FaceAttemptGroup({
@@ -755,7 +735,6 @@ function FaceAttemptGroup({
   faceNames,
   selectedFaces,
   onClickFaces,
-  onSelectEvent,
   onRefresh,
 }: FaceAttemptGroupProps) {
   const { t } = useTranslation(["views/faceLibrary", "views/explore"]);
@@ -773,8 +752,8 @@ function FaceAttemptGroup({
 
   const handleClickEvent = useCallback(
     (meta: boolean) => {
-      if (event && selectedFaces.length == 0 && !meta) {
-        onSelectEvent(event);
+      if (!meta) {
+        return;
       } else {
         const anySelected =
           group.find((face) => selectedFaces.includes(face.filename)) !=
@@ -798,7 +777,7 @@ function FaceAttemptGroup({
         }
       }
     },
-    [event, group, selectedFaces, onClickFaces, onSelectEvent],
+    [group, selectedFaces, onClickFaces],
   );
 
   // api calls
@@ -873,7 +852,6 @@ function FaceAttemptGroup({
           handleClickEvent(true);
         }
       }}
-      onSelectEvent={onSelectEvent}
     >
       {(data) => (
         <>
@@ -881,14 +859,15 @@ function FaceAttemptGroup({
             faceNames={faceNames}
             onTrainAttempt={(name) => onTrainAttempt(data, name)}
           >
-            <AddFaceIcon className="size-5 cursor-pointer text-primary-variant hover:text-primary" />
+            <BlurredIconButton>
+              <AddFaceIcon className="size-5" />
+            </BlurredIconButton>
           </FaceSelectionDialog>
           <Tooltip>
-            <TooltipTrigger>
-              <LuRefreshCw
-                className="size-5 cursor-pointer text-primary-variant hover:text-primary"
-                onClick={() => onReprocess(data)}
-              />
+            <TooltipTrigger asChild>
+              <BlurredIconButton onClick={() => onReprocess(data)}>
+                <LuRefreshCw className="size-5" />
+              </BlurredIconButton>
             </TooltipTrigger>
             <TooltipContent>{t("button.reprocessFace")}</TooltipContent>
           </Tooltip>
@@ -934,36 +913,35 @@ function FaceGrid({
     <div
       ref={contentRef}
       className={cn(
-        "scrollbar-container gap-2 overflow-y-scroll p-1",
-        isDesktop ? "flex flex-wrap" : "grid grid-cols-2 md:grid-cols-4",
+        "scrollbar-container grid grid-cols-2 gap-2 overflow-y-scroll p-1 md:grid-cols-4 xl:grid-cols-8 2xl:grid-cols-10 3xl:grid-cols-12",
       )}
     >
       {sortedFaces.map((image: string) => (
-        <ClassificationCard
-          className="gap-2 rounded-lg bg-card p-2"
-          key={image}
-          data={{
-            name: pageToggle,
-            filename: image,
-            filepath: `clips/faces/${pageToggle}/${image}`,
-          }}
-          selected={selectedFaces.includes(image)}
-          i18nLibrary="views/faceLibrary"
-          onClick={(data, meta) => onClickFaces([data.filename], meta)}
-        >
-          <Tooltip>
-            <TooltipTrigger>
-              <LuTrash2
-                className="size-5 cursor-pointer text-primary-variant hover:text-primary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(pageToggle, [image]);
-                }}
-              />
-            </TooltipTrigger>
-            <TooltipContent>{t("button.deleteFaceAttempts")}</TooltipContent>
-          </Tooltip>
-        </ClassificationCard>
+        <div key={image} className="aspect-square w-full">
+          <ClassificationCard
+            data={{
+              name: pageToggle,
+              filename: image,
+              filepath: `clips/faces/${pageToggle}/${image}`,
+            }}
+            selected={selectedFaces.includes(image)}
+            i18nLibrary="views/faceLibrary"
+            onClick={(data, meta) => onClickFaces([data.filename], meta)}
+          >
+            <Tooltip>
+              <TooltipTrigger>
+                <LuTrash2
+                  className="size-5 cursor-pointer text-gray-200 hover:text-danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(pageToggle, [image]);
+                  }}
+                />
+              </TooltipTrigger>
+              <TooltipContent>{t("button.deleteFaceAttempts")}</TooltipContent>
+            </Tooltip>
+          </ClassificationCard>
+        </div>
       ))}
     </div>
   );

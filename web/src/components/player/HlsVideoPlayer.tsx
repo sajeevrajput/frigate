@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils";
 import { ASPECT_VERTICAL_LAYOUT, RecordingPlayerError } from "@/types/record";
 import { useTranslation } from "react-i18next";
 import ObjectTrackOverlay from "@/components/overlay/ObjectTrackOverlay";
-import { useDetailStream } from "@/context/detail-stream-context";
 
 // Android native hls does not seek correctly
 const USE_NATIVE_HLS = !isAndroid;
@@ -54,7 +53,11 @@ type HlsVideoPlayerProps = {
   onUploadFrame?: (playTime: number) => Promise<AxiosResponse> | undefined;
   toggleFullscreen?: () => void;
   onError?: (error: RecordingPlayerError) => void;
+  isDetailMode?: boolean;
+  camera?: string;
+  currentTimeOverride?: number;
 };
+
 export default function HlsVideoPlayer({
   videoRef,
   containerRef,
@@ -74,16 +77,15 @@ export default function HlsVideoPlayer({
   onUploadFrame,
   toggleFullscreen,
   onError,
+  isDetailMode = false,
+  camera,
+  currentTimeOverride,
 }: HlsVideoPlayerProps) {
   const { t } = useTranslation("components/player");
   const { data: config } = useSWR<FrigateConfig>("config");
-  const {
-    selectedObjectId,
-    selectedObjectTimeline,
-    currentTime,
-    camera,
-    isDetailMode,
-  } = useDetailStream();
+
+  // for detail stream context in History
+  const currentTime = currentTimeOverride;
 
   // playback
 
@@ -314,16 +316,14 @@ export default function HlsVideoPlayer({
         }}
       >
         {isDetailMode &&
-          selectedObjectId &&
           camera &&
           currentTime &&
           videoDimensions.width > 0 &&
           videoDimensions.height > 0 && (
             <div className="absolute z-50 size-full">
               <ObjectTrackOverlay
-                key={`${selectedObjectId}-${currentTime}`}
+                key={`overlay-${currentTime}`}
                 camera={camera}
-                selectedObjectId={selectedObjectId}
                 showBoundingBoxes={!isPlaying}
                 currentTime={currentTime}
                 videoWidth={videoDimensions.width}
@@ -334,7 +334,6 @@ export default function HlsVideoPlayer({
                     onSeekToTime(timestamp, play);
                   }
                 }}
-                objectTimeline={selectedObjectTimeline}
               />
             </div>
           )}

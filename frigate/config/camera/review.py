@@ -1,10 +1,18 @@
+from enum import Enum
 from typing import Optional, Union
 
 from pydantic import Field, field_validator
 
 from ..base import FrigateBaseModel
 
-__all__ = ["ReviewConfig", "DetectionsConfig", "AlertsConfig"]
+__all__ = ["ReviewConfig", "DetectionsConfig", "AlertsConfig", "ImageSourceEnum"]
+
+
+class ImageSourceEnum(str, Enum):
+    """Image source options for GenAI Review."""
+
+    preview = "preview"
+    recordings = "recordings"
 
 
 DEFAULT_ALERT_OBJECTS = ["person", "car"]
@@ -77,6 +85,10 @@ class GenAIReviewConfig(FrigateBaseModel):
     )
     alerts: bool = Field(default=True, title="Enable GenAI for alerts.")
     detections: bool = Field(default=False, title="Enable GenAI for detections.")
+    image_source: ImageSourceEnum = Field(
+        default=ImageSourceEnum.preview,
+        title="Image source for review descriptions.",
+    )
     additional_concerns: list[str] = Field(
         default=[],
         title="Additional concerns that GenAI should make note of on this camera.",
@@ -93,13 +105,36 @@ class GenAIReviewConfig(FrigateBaseModel):
         default=None,
     )
     activity_context_prompt: str = Field(
-        default="""- **Zone context is critical**: Private enclosed spaces (back yards, back decks, fenced areas, inside garages) are resident territory where brief transient activity, routine tasks, and pet care are expected and normal. Front yards, driveways, and porches are semi-public but still resident spaces where deliveries, parking, and coming/going are routine. Consider whether the zone and activity align with normal residential use.
-- **Person + Pet = Normal Activity**: When both "Person" and "Dog" (or "Cat") are detected together in residential zones, this is routine pet care activity (walking, letting out, playing, supervising). Assign Level 0 unless there are OTHER strong suspicious behaviors present (like testing doors, taking items, etc.). A person with their pet in a residential zone is baseline normal activity.
-- Brief appearances in private zones (back yards, garages) are normal residential patterns.
-- Normal residential activity includes: residents, family members, guests, deliveries, services, maintenance workers, routine property use (parking, unloading, mail pickup, trash removal).
-- Brief movement with legitimate items (bags, packages, tools, equipment) in appropriate zones is routine.
-""",
-        title="Custom activity context prompt defining normal activity patterns for this property.",
+        default="""### Normal Activity Indicators (Level 0)
+- Known/verified people in any zone
+- People with pets in residential areas
+- Brief activity near vehicles: approaching vehicles, brief standing, then leaving or entering vehicle (unloading, loading, checking something)
+- Deliveries or services: brief approach to doors/porches, standing briefly, placing or retrieving items, then leaving
+- Access to private areas: entering back yards, garages, or homes (with or without visible purpose in frame)
+- Brief movement through semi-public areas (driveways, front yards) with items or approaching structure/vehicle
+- Activity on public areas only (sidewalks, streets) without entering property
+- Services/maintenance workers with tools, uniforms, or vehicles
+
+### Suspicious Activity Indicators (Level 1)
+- Testing or attempting to open doors/windows on vehicles or buildings
+- Taking items that don't belong to them (stealing packages, objects from porches/driveways)
+- Climbing or jumping fences/barriers to access property
+- Attempting to conceal actions or items from view
+- Prolonged presence without purpose: remaining in same area (near vehicles, private zones) throughout most/all of the sequence without clear activity or task. Brief stops (a few seconds of standing) are normal; sustained presence (most of the duration) without interaction is concerning.
+- Activity at unusual hours (very late night/early morning) combined with suspicious behavior patterns
+
+### Critical Threat Indicators (Level 2)
+- Holding break-in tools (crowbars, pry bars, bolt cutters)
+- Weapons visible (guns, knives, bats used aggressively)
+- Forced entry in progress
+- Physical aggression or violence
+- Active property damage or theft
+
+### Assessment Guidance
+When evaluating activity, first check if it matches Normal Activity Indicators. If it clearly matches normal patterns (brief vehicle access, delivery behavior, known people, pet activity), assign Level 0. Only consider Level 1 if the activity shows clear suspicious behaviors that don't fit normal patterns (testing access, stealing items, lingering across many frames without task, forced entry attempts).
+
+These patterns are guidance, not rigid rules. Consider the complete context: time, zone, objects, and sequence of actions. Brief activity with apparent purpose is generally normal. Sustained problematic behavior or clear security violations warrant elevation.""",
+        title="Custom activity context prompt defining normal and suspicious activity patterns for this property.",
     )
 
 
