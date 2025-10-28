@@ -342,7 +342,7 @@ class FrigateApp:
             try:
                 largest_frame = max(
                     [
-                        det.model.height * det.model.width * 3
+                        det.model.height * det.model.width * 3 * 4  # multiply by 1 for batch size
                         if det.model is not None
                         else 320
                         for det in self.config.detectors.values()

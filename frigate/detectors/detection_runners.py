@@ -1,5 +1,5 @@
 """Base runner implementation for ONNX models."""
-
+import openvino.properties.hint as hints
 import logging
 import os
 from datetime import datetime
@@ -249,8 +249,11 @@ class OpenVINOModelRunner(BaseModelRunner):
             self.ov_core.set_property(device, {"PERFORMANCE_HINT": "LATENCY"})
 
         # Compile model
+        model = self.ov_core.read_model(model=model_path)
+        model.reshape([-1,3,640,640])  # just a dummy reshape to set dynamic shapes
+        
         self.compiled_model = self.ov_core.compile_model(
-            model=model_path, device_name=device
+            model=model, device_name=device
         )
 
         # Create reusable inference request
@@ -263,8 +266,8 @@ class OpenVINOModelRunner(BaseModelRunner):
             # self.request_ids = mp.Queue(maxsize=1000)    # to track sent request_ids for retrieval of results
 
             # start async runner thread to wait for input and process results
-            self.async_infer_thread = threading.Thread(target=self._async_runner, daemon=True)
-            self.async_infer_thread.start()
+            # self.async_infer_thread = threading.Thread(target=self._async_runner, daemon=True)
+            # self.async_infer_thread.start()
 
         else:
             self.infer_request = self.compiled_model.create_infer_request()

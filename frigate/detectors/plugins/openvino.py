@@ -53,7 +53,7 @@ class OvDetector(DetectionApi):
             model_path=detector_config.model.path,
             device=detector_config.device,
             model_type=detector_config.model.model_type,
-            async_mode=True,
+            async_mode=True, 
             async_callback=self.callback
         )
         logger.info("Performance Hint: %s", self.runner.compiled_model.get_property("PERFORMANCE_HINT"))
@@ -210,9 +210,9 @@ class OvDetector(DetectionApi):
                 ]
             return detections
         elif self.ov_model_type == ModelTypeEnum.yologeneric:
-            res = post_process_yolo(outputs, self.w, self.h), connection_id, frame_name
+            # res = post_process_yolo(outputs, self.w, self.h), connection_id, frame_name
             logger.info(f"{[datetime.now().timestamp()]} OpenVINO YOLO Generic detection for {frame_name} took {datetime.now().timestamp() - t0:.3f}s")
-            return res
+            return detections, connection_id, frame_name
         elif self.ov_model_type == ModelTypeEnum.yolox:
             # [x, y, h, w, box_score, class_no_1, ..., class_no_80],
             results = outputs[0]
@@ -281,7 +281,12 @@ class OvDetector(DetectionApi):
         #     return detections
         
         # adding for yologeneric only atm
-        output_tensor = infer_request.get_output_tensor(0).data
+        # output_tensor = infer_request.get_output_tensor(0).data
+        output = infer_request.get_output_tensor(0)
+        output_tensor = output.data
+        logger.info(f"[{datetime.now().timestamp():.4f}]: output {output}")
+
+        logger.info(f"[{datetime.now().timestamp():.4f}]: output_tensor obtained {output_tensor.shape} of type {output_tensor.data} for frame {frame_name}")
         # post process
         if self.ov_model_type == ModelTypeEnum.yologeneric:
             out_tensor = []
@@ -289,6 +294,7 @@ class OvDetector(DetectionApi):
             for item in output_tensor:
                 out_tensor.append(item.data)
             processed_output = post_process_yolo(out_tensor, self.w, self.h)
+            # processed_output = detections
             
         elif self.ov_model_type == ModelTypeEnum.rfdetr:
             processed_output =  post_process_rfdetr(

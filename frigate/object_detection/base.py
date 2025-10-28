@@ -151,7 +151,7 @@ class DetectorRunner(FrigateProcess):
             input_frame = frame_manager.get(
                 connection_id,
                 (
-                    1,
+                    4, 
                     self.detector_config.model.height,
                     self.detector_config.model.width,
                     3,
@@ -336,7 +336,7 @@ class ObjectDetectProcess:
             self.stop()
 
         # Async path for MemryX
-        # if self.detector_config.type == "memryx":
+        # if self.detector_config.type == "memryx": 
         if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
             logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
@@ -379,8 +379,10 @@ class RemoteObjectDetector:
         self.detection_queue = detection_queue
         self.stop_event = stop_event
         self.shm = UntrackedSharedMemory(name=self.name, create=False)
+        logger.info(f"shm size: {self.shm.size}")
+        logger.info(f"ndarry size: ({4 * model_config.height * model_config.width * 3})")
         self.np_shm = np.ndarray(
-            (1, model_config.height, model_config.width, 3),
+            (4, model_config.height, model_config.width, 3),    
             dtype=np.uint8,
             buffer=self.shm.buf,
         )

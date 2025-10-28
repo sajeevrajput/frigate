@@ -9,6 +9,7 @@ from multiprocessing.synchronize import Event as MpEvent
 from typing import Any
 
 import cv2
+import numpy as np
 
 from frigate.camera import CameraMetrics, PTZMetrics
 from frigate.comms.inter_process import InterProcessRequestor
@@ -654,11 +655,20 @@ def detect(
     frame_name: str,
 ):
     tensor_input = create_tensor_input(frame, model_config, region)
+    # vstack as batchsize 4
+    tensor_input = np.vstack([tensor_input] * 4)
 
     detections = []
     t0=datetime.now().timestamp()
     region_detections = object_detector.detect((tensor_input,frame_name))
     logger.info(f"1.detect(video): Detection for {frame_name} took {datetime.now().timestamp()-t0:.4f} seconds")    # includes frame-frame from same camera (adds latency because of other intermediate camera frames)
+    logger.info(f"2.detect(video): Detection for {frame_name} got {len(region_detections)} region detections")
+    logger.info(f"3.detect(video): Detection for {frame_name} region {region_detections}")
+    # region = (475, 360, 1171, 1056) # (x_min, y_min, x_max, y_max)
+    # region detections = [
+#     ('tv', 0.74462890625, (0.003515625, 0.16210938, 0.646875, 0.3761719)), 
+#     ('person', 0.7021484375, (0.12675782, 0.39472657, 0.8232422, 0.6287109))
+# ]
     for d in region_detections:
         box = d[2]
         size = region[2] - region[0]
@@ -900,6 +910,7 @@ def process_frames(
                     ]
                     regions += motion_regions
             regions = [(475, 360, 1171, 1056)]
+            # regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056)]
 
             # if starting up, get the next startup scan region
             if startup_scan:
