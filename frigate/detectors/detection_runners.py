@@ -1,9 +1,11 @@
 """Base runner implementation for ONNX models."""
-
+import openvino.properties.hint as hints
 import logging
 import os
+from datetime import datetime
 import platform
 import threading
+import multiprocessing as mp
 import queue
 from abc import ABC, abstractmethod
 from typing import Any
@@ -247,8 +249,11 @@ class OpenVINOModelRunner(BaseModelRunner):
             self.ov_core.set_property(device, {"PERFORMANCE_HINT": "LATENCY"})
 
         # Compile model
+        model = self.ov_core.read_model(model=model_path)
+        model.reshape([-1,3,640,640])  # just a dummy reshape to set dynamic shapes
+        
         self.compiled_model = self.ov_core.compile_model(
-            model=model_path, device_name=device
+            model=model, device_name=device
         )
 
         # Create reusable inference request
