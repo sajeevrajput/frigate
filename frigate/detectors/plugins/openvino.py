@@ -252,6 +252,7 @@ class OvDetector(DetectionApi):
         # logger.warning(f"Submitting request {connection_id} to inference queue. type of connection_id is {type(connection_id)}")
         # request_id = self.input_store.put(input_tensor) #TODO do I need to worry about order since connection_id is enough
         # self.runner.input_store.put((inputs, connection_id, frame_name, sent_time))
+        logger.warning(f"images size: {tensor_input.shape}")
         self.runner._async_runner((inputs, connection_id, frame_name, sent_time))
         
         # self.request_ids.put((request_id, connection_id))
@@ -277,15 +278,16 @@ class OvDetector(DetectionApi):
         # output_tensor = infer_request.get_output_tensor(0).data
         output = infer_request.get_output_tensor(0)
         output_tensor = output.data
+        logger.warning(f"Output tensor shape: {output_tensor.shape}")
 
         # post process
         if self.ov_model_type == ModelTypeEnum.yologeneric:
-            out_tensor = []
+            # out_tensor = []
 
-            for item in output_tensor:
-                out_tensor.append(item.data)
-            processed_output = post_process_yolo(out_tensor, self.w, self.h)
-            # processed_output = detections
+            # for item in output_tensor:
+            #     out_tensor.append(item.data)
+            # processed_output = post_process_yolo(out_tensor, self.w, self.h)
+            processed_output = detections
             
         elif self.ov_model_type == ModelTypeEnum.rfdetr:
             processed_output =  post_process_rfdetr(

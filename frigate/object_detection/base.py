@@ -98,6 +98,7 @@ class LocalObjectDetector(BaseLocalDetector):
 
 class AsyncLocalObjectDetector(BaseLocalDetector):
     def async_send_input(self, tensor_input: np.ndarray, connection_id: str, frame_name: str, sent_time):
+        logger.warning("tensor input shape before transform: {}".format(tensor_input.shape))
         tensor_input = self._transform_input(tensor_input)
         return self.detect_api.send_input(connection_id, tensor_input, frame_name, sent_time)
 
@@ -224,7 +225,7 @@ class AsyncDetectorRunner(FrigateProcess):
             input_frame = self._frame_manager.get(
                 connection_id,
                 (
-                    1,
+                    4,
                     self.detector_config.model.height,
                     self.detector_config.model.width,
                     3,
