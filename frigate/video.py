@@ -9,6 +9,7 @@ from multiprocessing.synchronize import Event as MpEvent
 from typing import Any
 
 import cv2
+import numpy as np
 
 from frigate.camera import CameraMetrics, PTZMetrics
 from frigate.comms.inter_process import InterProcessRequestor
@@ -651,11 +652,14 @@ def detect(
     region,
     objects_to_track,
     object_filters,
+    frame_name: str,
 ):
     tensor_input = create_tensor_input(frame, model_config, region)
+    # vstack as batchsize 4
+    tensor_input = np.vstack([tensor_input] * 4)
 
     detections = []
-    region_detections = object_detector.detect(tensor_input)
+    region_detections = object_detector.detect((tensor_input,frame_name))
     for d in region_detections:
         box = d[2]
         size = region[2] - region[0]
@@ -892,6 +896,8 @@ def process_frames(
                         for candidate in motion_clusters
                     ]
                     regions += motion_regions
+            regions = [(475, 360, 1171, 1056)]
+            # regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056)]
 
             # if starting up, get the next startup scan region
             if startup_scan:
@@ -926,6 +932,7 @@ def process_frames(
                         region,
                         camera_config.objects.track,
                         camera_config.objects.filters,
+                        frame_name
                     )
                 )
 

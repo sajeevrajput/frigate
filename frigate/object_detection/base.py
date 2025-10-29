@@ -90,15 +90,16 @@ class BaseLocalDetector(ObjectDetector):
 
 
 class LocalObjectDetector(BaseLocalDetector):
-    def detect_raw(self, tensor_input: np.ndarray):
+    def detect_raw(self, data):
+        tensor_input, connection_id, frame_name = data
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.detect_raw(tensor_input=tensor_input)
+        return self.detect_api.detect_raw(data=(tensor_input, connection_id, frame_name))
 
 
 class AsyncLocalObjectDetector(BaseLocalDetector):
-    def async_send_input(self, tensor_input: np.ndarray, connection_id: str):
+    def async_send_input(self, tensor_input: np.ndarray, connection_id: str, frame_name: str, sent_time):
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.send_input(connection_id, tensor_input)
+        return self.detect_api.send_input(connection_id, tensor_input, frame_name, sent_time)
 
     def async_receive_output(self):
         return self.detect_api.receive_output()
@@ -142,13 +143,13 @@ class DetectorRunner(FrigateProcess):
 
         while not self.stop_event.is_set():
             try:
-                connection_id = self.detection_queue.get(timeout=1)
+                connection_id, frame_name = self.detection_queue.get(timeout=1)
             except queue.Empty:
                 continue
             input_frame = frame_manager.get(
                 connection_id,
                 (
-                    1,
+                    4, 
                     self.detector_config.model.height,
                     self.detector_config.model.width,
                     3,
@@ -161,10 +162,11 @@ class DetectorRunner(FrigateProcess):
 
             # detect and send the output
             self.start_time.value = datetime.datetime.now().timestamp()
-            detections = object_detector.detect_raw(input_frame)
+            rec = object_detector.detect_raw([input_frame, connection_id, frame_name])
+            detections, conn_rec_id, frame_name_rec = rec
             duration = datetime.datetime.now().timestamp() - self.start_time.value
             logger.info(
-                f"Inference took {duration:.3f}s"
+                f"{self.name}: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name} rec frame: {frame_name_rec}"
             )
             frame_manager.close(connection_id)
 
@@ -215,7 +217,7 @@ class AsyncDetectorRunner(FrigateProcess):
         logger.info("Starting Detect Worker Thread")
         while not self.stop_event.is_set():
             try:
-                connection_id = self.detection_queue.get(timeout=1)
+                connection_id, frame_name = self.detection_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
@@ -234,21 +236,21 @@ class AsyncDetectorRunner(FrigateProcess):
                 continue
 
             # mark start time and send to accelerator
-            self.send_times.append(time.perf_counter())
-            self._detector.async_send_input(input_frame, connection_id)
+            self.send_times.append((time.perf_counter(), frame_name))
+            self._detector.async_send_input(input_frame, connection_id, frame_name, datetime.datetime.now().timestamp())
 
     def _result_worker(self) -> None:
         logger.info("Starting Result Worker Thread")
         while not self.stop_event.is_set():
-            connection_id, detections = self._detector.async_receive_output()
+            connection_id, detections, frame_name, inf_time, sent_time = self._detector.async_receive_output()
 
             if not self.send_times:
                 # guard; shouldn't happen if send/recv are balanced
                 continue
-            ts = self.send_times.popleft()
+            ts, poped_frame_name = self.send_times.popleft()
             duration = time.perf_counter() - ts
             logger.info(
-                f"Inference took {duration:.3f}s"
+                f"[{datetime.datetime.now().timestamp():.4f}]: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name}, inf time: {inf_time:.3f}s. popped frame: {poped_frame_name}, sent time: {sent_time:.3f}s, sent time delta: {datetime.datetime.now().timestamp() - sent_time:.3f}s"
             )
 
             # release input buffer
@@ -372,7 +374,7 @@ class RemoteObjectDetector:
         self.stop_event = stop_event
         self.shm = UntrackedSharedMemory(name=self.name, create=False)
         self.np_shm = np.ndarray(
-            (1, model_config.height, model_config.width, 3),
+            (4, model_config.height, model_config.width, 3),    
             dtype=np.uint8,
             buffer=self.shm.buf,
         )
@@ -380,7 +382,9 @@ class RemoteObjectDetector:
         self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         self.detector_subscriber = ObjectDetectorSubscriber(name)
 
-    def detect(self, tensor_input, threshold=0.4):
+    def detect(self, data, threshold=0.4):
+        # this function is called for each camera in its respective process
+        tensor_input, frame_name = data
         detections = []
 
         if self.stop_event.is_set():
@@ -388,7 +392,7 @@ class RemoteObjectDetector:
 
         # copy input to shared memory
         self.np_shm[:] = tensor_input[:]
-        self.detection_queue.put(self.name)
+        self.detection_queue.put((self.name, frame_name))
         result = self.detector_subscriber.check_for_update()
 
         # if it timed out
