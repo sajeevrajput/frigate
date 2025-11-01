@@ -278,7 +278,7 @@ class OvDetector(DetectionApi):
         detections = np.zeros((20, 6), np.float32)
         
         # if self.model_invalid:
-        #     return detections
+        #     return detections 
         
         # adding for yologeneric only atm
         # output_tensor = infer_request.get_output_tensor(0).data
@@ -293,8 +293,8 @@ class OvDetector(DetectionApi):
 
             for item in output_tensor:
                 out_tensor.append(item.data)
-            processed_output = post_process_yolo(out_tensor, self.w, self.h)
-            # processed_output = detections
+            # processed_output = post_process_yolo(out_tensor, self.w, self.h)
+            processed_output = detections
             
         elif self.ov_model_type == ModelTypeEnum.rfdetr:
             processed_output =  post_process_rfdetr(
@@ -367,6 +367,7 @@ class OvDetector(DetectionApi):
                 )
             processed_output = detections
         logger.info(f"[{datetime.now().timestamp():.4f}]: Completed post-processing for frame {frame_name} in {datetime.now().timestamp() - t0:.3f}s")  
+        logger.warning(f"Inference time taken for frame {frame_name}: {datetime.now().timestamp() - start_time:.3f}s")  
         self.runner.response_store.put((connection_id, processed_output, frame_name, datetime.now().timestamp() - start_time, sent_time))
             
 # class OvAsyncDetector(DetectionApi):

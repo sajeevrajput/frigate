@@ -111,7 +111,7 @@ class CameraMaintainer(threading.Thread):
             try:
                 largest_frame = max(
                     [
-                        det.model.height * det.model.width * 3 * 4  # multiply by 4 for batch size
+                        det.model.height * det.model.width * 3 * 4  # multiply by 4 for batch size, ONLY RUNTIME
                         if det.model is not None
                         else 320
                         for det in self.config.detectors.values()
