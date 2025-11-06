@@ -53,7 +53,7 @@ class OvDetector(DetectionApi):
             model_path=detector_config.model.path,
             device=detector_config.device,
             model_type=detector_config.model.model_type,
-            async_mode=True,
+            # async_mode=True,
             async_callback=self.callback
         )
         logger.info("Performance Hint: %s", self.runner.compiled_model.get_property("PERFORMANCE_HINT"))
@@ -73,6 +73,9 @@ class OvDetector(DetectionApi):
             self.model_invalid = True
 
         if self.ov_model_type == ModelTypeEnum.ssd:
+            # partial_input_shape = self.runner.compiled_model.inputs[0].get_partial_shape()
+            # if partial_input_shape.is_dynamic:
+            
             model_inputs = self.runner.compiled_model.inputs
             model_outputs = self.runner.compiled_model.outputs
 
@@ -86,8 +89,7 @@ class OvDetector(DetectionApi):
                     f"SSD models must only have 1 output. Found {len(model_outputs)}."
                 )
                 self.model_invalid = True
-
-            output_shape = model_outputs[0].get_shape()
+            output_shape = model_outputs[0].get_partial_shape() # to accomodate dynamic shapes
             if output_shape[0] != 1 or output_shape[1] != 1 or output_shape[3] != 7:
                 logger.error(f"SSD model output doesn't match. Found {output_shape}.")
                 self.model_invalid = True
@@ -188,7 +190,8 @@ class OvDetector(DetectionApi):
                     ymax,
                     xmax,
                 ]
-            return detections
+            # return detections, connection_id, frame_name
+            return np.zeros((20, 6), np.float32), connection_id, frame_name
         elif self.ov_model_type == ModelTypeEnum.yolonas:
             predictions = outputs[0]
 

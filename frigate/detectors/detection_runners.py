@@ -250,7 +250,7 @@ class OpenVINOModelRunner(BaseModelRunner):
 
         # Compile model
         model = self.ov_core.read_model(model=model_path)
-        model.reshape([-1,3,640,640])  # just a dummy reshape to set dynamic shapes
+        model.reshape([-1,300,300,3])  # just a dummy reshape to set dynamic shapes
         
         self.compiled_model = self.ov_core.compile_model(
             model=model, device_name=device
@@ -365,7 +365,9 @@ class OpenVINOModelRunner(BaseModelRunner):
                 self.infer_request.set_input_tensor(input_index, input_tensor)
 
             # Run inference
+            t0=datetime.now().timestamp()
             self.infer_request.infer()
+            logger.info(f"Inference took {datetime.now().timestamp() - t0:.3f}s, {self.infer_request.latency/1000:.4f}ms")
 
         # Get all output tensors
         outputs = []

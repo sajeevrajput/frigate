@@ -646,41 +646,41 @@ class CameraTracker(FrigateProcess):
 
 def detect(
     detect_config: DetectConfig,
-    object_detector,
-    frame,
+    object_detector: RemoteObjectDetector,
+    frame: np.ndarray,
     model_config: ModelConfig,
-    region,
+    regions : List,
     objects_to_track,
     object_filters,
     frame_name: str,
 ):
-    tensor_input = create_tensor_input(frame, model_config, region)
-    # vstack as batchsize 4
-    tensor_input = np.vstack([tensor_input] * 4)
 
+    input_tensors = [create_tensor_input(frame, model_config, region) for region in regions]
+
+    all_regions_detections = object_detector.detect((input_tensors, frame_name))
     detections = []
-    region_detections = object_detector.detect((tensor_input,frame_name))
-    for d in region_detections:
-        box = d[2]
-        size = region[2] - region[0]
-        x_min = int(max(0, (box[1] * size) + region[0]))
-        y_min = int(max(0, (box[0] * size) + region[1]))
-        x_max = int(min(detect_config.width - 1, (box[3] * size) + region[0]))
-        y_max = int(min(detect_config.height - 1, (box[2] * size) + region[1]))
+    for region_detections in all_regions_detections:
+        for d in region_detections:
+            box = d[2]
+            size = region[2] - region[0]
+            x_min = int(max(0, (box[1] * size) + region[0]))
+            y_min = int(max(0, (box[0] * size) + region[1]))
+            x_max = int(min(detect_config.width - 1, (box[3] * size) + region[0]))
+            y_max = int(min(detect_config.height - 1, (box[2] * size) + region[1]))
 
-        # ignore objects that were detected outside the frame
-        if (x_min >= detect_config.width - 1) or (y_min >= detect_config.height - 1):
-            continue
+            # ignore objects that were detected outside the frame
+            if (x_min >= detect_config.width - 1) or (y_min >= detect_config.height - 1):
+                continue
 
-        width = x_max - x_min
-        height = y_max - y_min
-        area = width * height
-        ratio = width / max(1, height)
-        det = (d[0], d[1], (x_min, y_min, x_max, y_max), area, ratio, region)
-        # apply object filters
-        if is_object_filtered(det, objects_to_track, object_filters):
-            continue
-        detections.append(det)
+            width = x_max - x_min
+            height = y_max - y_min
+            area = width * height
+            ratio = width / max(1, height)
+            det = (d[0], d[1], (x_min, y_min, x_max, y_max), area, ratio, region)
+            # apply object filters
+            if is_object_filtered(det, objects_to_track, object_filters):
+                continue
+            detections.append(det)
     return detections
 
 
@@ -896,8 +896,8 @@ def process_frames(
                         for candidate in motion_clusters
                     ]
                     regions += motion_regions
-            regions = [(475, 360, 1171, 1056)]
-            # regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056)]
+            # regions = [(475, 360, 1171, 1056)]  # hardcoded to test fixed region
+            regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056)]
 
             # if starting up, get the next startup scan region
             if startup_scan:
@@ -922,19 +922,19 @@ def process_frames(
                 if obj["id"] in stationary_object_ids
             ]
 
-            for region in regions:
-                detections.extend(
-                    detect(
-                        camera_config.detect,
-                        object_detector,
-                        frame,
-                        model_config,
-                        region,
-                        camera_config.objects.track,
-                        camera_config.objects.filters,
-                        frame_name
-                    )
+            # for region in regions:
+            detections.extend(
+                detect(
+                    camera_config.detect,
+                    object_detector,
+                    frame,
+                    model_config,
+                    regions,
+                    camera_config.objects.track,
+                    camera_config.objects.filters,
+                    frame_name
                 )
+            )
 
             consolidated_detections = reduce_detections(frame_shape, detections)
 

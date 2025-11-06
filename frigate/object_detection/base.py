@@ -126,6 +126,7 @@ class DetectorRunner(FrigateProcess):
         self.config = config
         self.detector_config = detector_config
         self.outputs: dict = {}
+        self.BATCH_SIZE = 4
 
     def create_output_shm(self, name: str):
         out_shm = UntrackedSharedMemory(name=f"out-{name}", create=False)
@@ -137,48 +138,65 @@ class DetectorRunner(FrigateProcess):
 
         frame_manager = SharedMemoryFrameManager()
         object_detector = LocalObjectDetector(detector_config=self.detector_config)
-        detector_publisher = ObjectDetectorPublisher()
+        detector_publisher = ObjectDetectorPublisher()  # create a pool of publishers=batchsize
 
-        for name in self.cameras:
-            self.create_output_shm(name)
+        # for name in self.cameras:
+        #     self.create_output_shm(name)
 
         while not self.stop_event.is_set():
-            try:
-                connection_id, frame_name = self.detection_queue.get(timeout=1)
-            except queue.Empty:
-                continue
-            input_frame = frame_manager.get(
-                connection_id,
-                (
-                    4, 
-                    self.detector_config.model.height,
-                    self.detector_config.model.width,
-                    3,
-                ),
-            )
+            detection_queue_size = self.detection_queue.qsize()
+            self.logger.info(f"[{datetime.datetime.now().timestamp()}]: detection_queue size: {self.detection_queue.qsize()}")
 
-            if input_frame is None:
-                logger.warning(f"Failed to get frame {connection_id} from SHM")
+            connection_ids = [self.detection_queue.get(timeout=1) for i in range(min(detection_queue_size, self.BATCH_SIZE))]
+            input_frames = []
+            for connection_id, frame_name in connection_ids:
+                try:
+                    connection_id, frame_name = self.detection_queue.get(timeout=1)
+                except queue.Empty:
+                    continue
+                self.create_output_shm(connection_id)
+                input_frame = frame_manager.get(
+                    connection_id,
+                    (
+                        1,
+                        self.detector_config.model.height,
+                        self.detector_config.model.width,
+                        3,
+                    ),
+                )
+
+                if input_frame is None:
+                    logger.warning(f"Failed to get frame {connection_id} from SHM")
+                    continue
+                input_frames.append(input_frame)
+            
+            if not input_frames:
                 continue
+            
+            input_tensors = np.vstack(input_frames, axis=0)
+            
 
             # detect and send the output
             self.start_time.value = datetime.datetime.now().timestamp()
-            rec = object_detector.detect_raw([input_frame, connection_id, frame_name])
+            rec = object_detector.detect_raw([input_tensors, connection_id, frame_name])
             detections, conn_rec_id, frame_name_rec = rec
             duration = datetime.datetime.now().timestamp() - self.start_time.value
             logger.info(
-                f"{self.name}: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name} rec frame: {frame_name_rec}"
+                f"[{datetime.datetime.now().timestamp()}]: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name} rec frame: {frame_name_rec}"
             )
-            frame_manager.close(connection_id)
+            # release input buffer
+            for connection_id, frame_name in connection_ids:
+                frame_manager.close(connection_id)
+                
+                # fetch outputs and publish
+                if connection_id not in self.outputs:
+                    self.create_output_shm(connection_id)
 
-            if connection_id not in self.outputs:
-                self.create_output_shm(connection_id)
+                self.outputs[connection_id]["np"][:] = detections[:]
+                detector_publisher.publish(connection_id)   # publish for each cam-region
+                self.start_time.value = 0.0
 
-            self.outputs[connection_id]["np"][:] = detections[:]
-            detector_publisher.publish(connection_id)
-            self.start_time.value = 0.0
-
-            self.avg_speed.value = (self.avg_speed.value * 9 + duration) / 10
+                self.avg_speed.value = (self.avg_speed.value * 9 + duration) / 10
 
         detector_publisher.stop()
         logger.info("Exited detection process...")
@@ -331,8 +349,8 @@ class ObjectDetectProcess:
             self.stop()
 
         # Async path for MemryX
-        # if self.detector_config.type == "memryx":
-        if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
+        if self.detector_config.type == "memryx":
+        # if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
             logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
                 f"frigate.detector:{self.name}",
@@ -359,6 +377,54 @@ class ObjectDetectProcess:
         self.detect_process.start()
 
 
+class RegionSHM:
+    def __init__(self, 
+                 name: str, input_array_shape: tuple(int,int,int)):
+        self.inp_shm_name = name
+        self.out_shm_name = f"out-{name}"
+        
+        # create input shm
+        self.inp_shm = UntrackedSharedMemory(name=self.inp_shm_name, create=True, size=input_array_shape[0] * input_array_shape[1] * 3)
+        self.inp_shm_np = np.ndarray(
+            (1, input_array_shape[0], input_array_shape[1], 3),
+            dtype=np.uint8,
+            buffer=self.inp_shm.buf,
+        )
+        
+        # create detections shm
+        self.out_shm = UntrackedSharedMemory(name=self.out_shm_name, create=True, size=20 * 6 * 4)
+        self.out_shm_np = np.ndarray((1, 20, 6), dtype=np.float32, buffer=self.out_shm.buf)
+        
+        # create subscriber
+        self.detector_subscriber = ObjectDetectorSubscriber(self.inp_shm_name)  # e.g. 'camera1-0'
+
+class UntrackedSharedMemoryPool:
+    """Create a pool of shared memory regions for object detection inputs and outputs.
+    This only creates the shared memory regions and does book keeping. It does not manage their usage. 
+    Use SharedMemoryFrameManager to manage usage. 
+    """
+    def __init__(self, name: str, input_array_shape: tuple(int,int), pool_size: int):
+        self.name = name
+        self.inp_shape = input_array_shape
+        self.pool_size = pool_size
+        self.shm_pool: dict[int, RegionSHM] = {}  # dict of inp output shm name pair for each region
+        for i in range(pool_size):
+            shm_name = f"{self.name}-{i}"
+            self.shm_pool[i] = RegionSHM(name=shm_name, input_array_shape=input_array_shape)
+
+    def __getitem__(self, index: int) -> RegionSHM:
+        """index here gives an impression of a shm region from the pool of shm regions created for a camera"""
+        return self.shm_pool[index]
+
+    def __setitem__(self, index: int, value: RegionSHM) -> None:
+        """Set the shm region info at the given index."""
+        raise NotImplementedError("Setting region shm is not supported.")
+    
+    def cleanup_all(self):
+        for shm in self.shm_pool.values():
+            shm.unlink()
+
+
 class RemoteObjectDetector:
     def __init__(
         self,
@@ -373,43 +439,76 @@ class RemoteObjectDetector:
         self.fps = EventsPerSecond()
         self.detection_queue = detection_queue
         self.stop_event = stop_event
-        self.shm = UntrackedSharedMemory(name=self.name, create=False)
-        self.np_shm = np.ndarray(
-            (4, model_config.height, model_config.width, 3),    
-            dtype=np.uint8,
-            buffer=self.shm.buf,
-        )
-        self.out_shm = UntrackedSharedMemory(name=f"out-{self.name}", create=False)
-        self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
-        self.detector_subscriber = ObjectDetectorSubscriber(name)
+        self.shm_pool = UntrackedSharedMemoryPool(name=self.name, input_array_shape=(model_config.height, model_config.width), pool_size=4) # Pool of SHM regions
+        # self.shm = UntrackedSharedMemory(name=self.name, create=False)
+        # self.np_shm = np.ndarray(
+        #     (1, model_config.height, model_config.width, 3),
+        #     dtype=np.uint8,
+        #     buffer=self.shm.buf,
+        # )
+        # self.out_shm = UntrackedSharedMemory(name=f"out-{self.name}", create=False)
+        # self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
+        # self.detector_subscriber = ObjectDetectorSubscriber(name)
 
     def detect(self, data, threshold=0.4):
         # this function is called for each camera in its respective process
-        tensor_input, frame_name = data
+        tensor_inputs, frame_name = data
         detections = []
 
         if self.stop_event.is_set():
             return detections
 
         # copy input to shared memory
-        self.np_shm[:] = tensor_input[:]
-        self.detection_queue.put((self.name, frame_name))
-        result = self.detector_subscriber.check_for_update()
+        # self.np_shm[:] = tensor_input[:]
+        # self.detection_queue.put((self.name, frame_name))
+        # result = self.detector_subscriber.check_for_update()    # this is a blocker call, can do for all regions
 
-        # if it timed out
-        if result is None:
-            return detections
+        # # if it timed out
+        # if result is None:
+        #     return detections
 
-        for d in self.out_np_shm:
-            if d[1] < threshold:
-                break
-            detections.append(
-                (self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5]))
-            )
-        self.fps.update()
+        # for d in self.out_np_shm:
+        #     if d[1] < threshold:
+        #         break
+        #     detections.append(
+        #         (self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5]))
+        #     )
+        # self.fps.update()
+        
+        # better to keep pool size bigger than batchsize to avoid waiting for shm region to be free
+        for i in range(0,len(tensor_inputs),self.pool_size):
+            names = []
+            # refresh every region shm with new input
+            for j in range(self.pool_size):
+                region_shm = self.shm_pool[j]
+                region_shm.inp_shm_np[:] = tensor_inputs[i*self.pool_size + j][:]
+                names.append(region_shm.inp_shm_name)
+            
+            self.detection_queue.put((names, frame_name))
+            
+            # monitor for outputs for each region, post proc immediately if one's available.
+            pending_regions = names.copy()
+            start_time = time.time()
+            TIMEOUT = 5.0  # seconds timeout for all regions in the pool to be processed
+            while pending_regions and time.time() - start_time < TIMEOUT:
+                for r in list(pending_regions):
+                    region_shm = self.shm_pool[r]
+                    result = region_shm.detector_subscriber.check_for_update(timeout=0.001)
+                    if result is not None:
+                        for d in region_shm.out_shm_np:
+                            if d[1] < threshold:
+                                break
+                            detections.append(
+                                (self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5]))
+                            )
+                        self.fps.update()
+                        pending_regions.remove(r)
+            # end of while pending_regions
+                    
         return detections
 
     def cleanup(self):
         self.detector_subscriber.stop()
         self.shm.unlink()
         self.out_shm.unlink()
+        self.shm_pool.cleanup_all()

@@ -95,6 +95,7 @@ class CameraMaintainer(threading.Thread):
     def __start_camera_processor(
         self, name: str, config: CameraConfig, runtime: bool = False
     ) -> None:
+        self.MAX_BATCHSIZE=8
         if not config.enabled_in_config:
             logger.info(f"Camera processor not started for disabled camera {name}")
             return
@@ -111,7 +112,7 @@ class CameraMaintainer(threading.Thread):
             try:
                 largest_frame = max(
                     [
-                        det.model.height * det.model.width * 3 * 4  # multiply by batch size
+                        det.model.height * det.model.width * 3 * self.MAX_BATCHSIZE  # multiply by batch size
                         if det.model is not None
                         else 320
                         for det in self.config.detectors.values()

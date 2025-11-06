@@ -338,11 +338,12 @@ class FrigateApp:
         )
 
     def start_detectors(self) -> None:
+        self.MAX_BATCHSIZE=8
         for name in self.config.cameras.keys():
             try:
                 largest_frame = max(
                     [
-                        det.model.height * det.model.width * 3 * 4  # multiply by batch size
+                        det.model.height * det.model.width * 3 * self.MAX_BATCHSIZE  # max possible batch size since batch per inference is dynamic
                         if det.model is not None
                         else 320
                         for det in self.config.detectors.values()
