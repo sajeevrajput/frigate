@@ -90,17 +90,15 @@ class BaseLocalDetector(ObjectDetector):
 
 
 class LocalObjectDetector(BaseLocalDetector):
-    def detect_raw(self, data):
-        tensor_input, connection_id, frame_name = data
+    def detect_raw(self, tensor_input: np.ndarray):
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.detect_raw(data=(tensor_input, connection_id, frame_name))
+        return self.detect_api.detect_raw(tensor_input=tensor_input)
 
 
 class AsyncLocalObjectDetector(BaseLocalDetector):
-    def async_send_input(self, tensor_input: np.ndarray, connection_id: str, frame_name: str, sent_time):
-        logger.warning("tensor input shape before transform: {}".format(tensor_input.shape))
+    def async_send_input(self, tensor_input: np.ndarray, connection_id: str):
         tensor_input = self._transform_input(tensor_input)
-        return self.detect_api.send_input(connection_id, tensor_input, frame_name, sent_time)
+        return self.detect_api.send_input(connection_id, tensor_input)
 
     def async_receive_output(self):
         return self.detect_api.receive_output()
@@ -126,7 +124,7 @@ class DetectorRunner(FrigateProcess):
         self.config = config
         self.detector_config = detector_config
         self.outputs: dict = {}
-        self.BATCH_SIZE = 4
+        self.BATCH_SIZE = 8
 
     def create_output_shm(self, name: str):
         out_shm = UntrackedSharedMemory(name=f"out-{name}", create=False)
@@ -138,20 +136,23 @@ class DetectorRunner(FrigateProcess):
 
         frame_manager = SharedMemoryFrameManager()
         object_detector = LocalObjectDetector(detector_config=self.detector_config)
-        detector_publisher = ObjectDetectorPublisher()  # create a pool of publishers=batchsize
+        detector_publisher = ObjectDetectorPublisher()
 
         # for name in self.cameras:
         #     self.create_output_shm(name)
 
         while not self.stop_event.is_set():
             detection_queue_size = self.detection_queue.qsize()
-            self.logger.info(f"[{datetime.datetime.now().timestamp()}]: detection_queue size: {self.detection_queue.qsize()}")
+            # self.logger.info(f"[{datetime.datetime.now().timestamp()}]: detection_queue size: {self.detection_queue.qsize()}")
 
-            connection_ids = [self.detection_queue.get(timeout=1) for i in range(min(detection_queue_size, self.BATCH_SIZE))]
+
             input_frames = []
-            for connection_id, frame_name in connection_ids:
+            connection_ids = []
+            # pull no of items == BATCH_SIZE from queue
+
+            for i in range(min(detection_queue_size, self.BATCH_SIZE)):
                 try:
-                    connection_id, frame_name = self.detection_queue.get(timeout=1)
+                    connection_id = self.detection_queue.get(timeout=1)
                 except queue.Empty:
                     continue
                 self.create_output_shm(connection_id)
@@ -169,31 +170,34 @@ class DetectorRunner(FrigateProcess):
                     logger.warning(f"Failed to get frame {connection_id} from SHM")
                     continue
                 input_frames.append(input_frame)
+                connection_ids.append(connection_id)
             
             if not input_frames:
                 continue
             
-            input_tensors = np.vstack(input_frames, axis=0)
+            # batch the inputs
+            input_tensor = np.vstack(input_frames)
             
 
             # detect and send the output
             self.start_time.value = datetime.datetime.now().timestamp()
-            rec = object_detector.detect_raw([input_tensors, connection_id, frame_name])
-            detections, conn_rec_id, frame_name_rec = rec
+            logger.warning(f"[{datetime.datetime.now().timestamp()}]: Input tensor shape: {input_tensor.shape}")
+            detections = object_detector.detect_raw(input_tensor)
+            logger.warning(f"[{datetime.datetime.now().timestamp()}]: Detections: {detections.shape}")
             duration = datetime.datetime.now().timestamp() - self.start_time.value
             logger.info(
-                f"[{datetime.datetime.now().timestamp()}]: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name} rec frame: {frame_name_rec}"
+                f"[{datetime.datetime.now().timestamp()}]: Inference took {duration:.3f}s for {connection_id}"
             )
             # release input buffer
-            for connection_id, frame_name in connection_ids:
+            for i, connection_id in enumerate(connection_ids):
                 frame_manager.close(connection_id)
                 
                 # fetch outputs and publish
                 if connection_id not in self.outputs:
                     self.create_output_shm(connection_id)
 
-                self.outputs[connection_id]["np"][:] = detections[:]
-                detector_publisher.publish(connection_id)   # publish for each cam-region
+                self.outputs[connection_id]["np"][:] = detections[i][:]
+                detector_publisher.publish(connection_id)
                 self.start_time.value = 0.0
 
                 self.avg_speed.value = (self.avg_speed.value * 9 + duration) / 10
@@ -379,12 +383,15 @@ class ObjectDetectProcess:
 
 class RegionSHM:
     def __init__(self, 
-                 name: str, input_array_shape: tuple(int,int,int)):
+                 name: str, input_array_shape):
         self.inp_shm_name = name
         self.out_shm_name = f"out-{name}"
         
         # create input shm
-        self.inp_shm = UntrackedSharedMemory(name=self.inp_shm_name, create=True, size=input_array_shape[0] * input_array_shape[1] * 3)
+        try:
+            self.inp_shm = UntrackedSharedMemory(name=self.inp_shm_name, create=True, size=input_array_shape[0] * input_array_shape[1] * 3)
+        except FileExistsError:
+            self.inp_shm = UntrackedSharedMemory(name=self.inp_shm_name)
         self.inp_shm_np = np.ndarray(
             (1, input_array_shape[0], input_array_shape[1], 3),
             dtype=np.uint8,
@@ -392,8 +399,11 @@ class RegionSHM:
         )
         
         # create detections shm
-        self.out_shm = UntrackedSharedMemory(name=self.out_shm_name, create=True, size=20 * 6 * 4)
-        self.out_shm_np = np.ndarray((1, 20, 6), dtype=np.float32, buffer=self.out_shm.buf)
+        try:
+            self.out_shm = UntrackedSharedMemory(name=self.out_shm_name, create=True, size=20 * 6 * 4)
+        except FileExistsError:
+            self.out_shm = UntrackedSharedMemory(name=self.out_shm_name)
+        self.out_shm_np = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         
         # create subscriber
         self.detector_subscriber = ObjectDetectorSubscriber(self.inp_shm_name)  # e.g. 'camera1-0'
@@ -403,14 +413,14 @@ class UntrackedSharedMemoryPool:
     This only creates the shared memory regions and does book keeping. It does not manage their usage. 
     Use SharedMemoryFrameManager to manage usage. 
     """
-    def __init__(self, name: str, input_array_shape: tuple(int,int), pool_size: int):
+    def __init__(self, name: str, input_array_shape, pool_size: int):
         self.name = name
         self.inp_shape = input_array_shape
         self.pool_size = pool_size
         self.shm_pool: dict[int, RegionSHM] = {}  # dict of inp output shm name pair for each region
         for i in range(pool_size):
             shm_name = f"{self.name}-{i}"
-            self.shm_pool[i] = RegionSHM(name=shm_name, input_array_shape=input_array_shape)
+            self.shm_pool[shm_name] = RegionSHM(name=shm_name, input_array_shape=input_array_shape)
 
     def __getitem__(self, index: int) -> RegionSHM:
         """index here gives an impression of a shm region from the pool of shm regions created for a camera"""
@@ -433,13 +443,15 @@ class RemoteObjectDetector:
         detection_queue: Queue,
         model_config: ModelConfig,
         stop_event: MpEvent,
+        shm_pool_size: int = 4,
     ):
         self.labels = labels
         self.name = name
         self.fps = EventsPerSecond()
         self.detection_queue = detection_queue
         self.stop_event = stop_event
-        self.shm_pool = UntrackedSharedMemoryPool(name=self.name, input_array_shape=(model_config.height, model_config.width), pool_size=4) # Pool of SHM regions
+        self.shm_pool_size = shm_pool_size
+        self.shm_pool = UntrackedSharedMemoryPool(name=self.name, input_array_shape=(model_config.height, model_config.width), pool_size=shm_pool_size) # Pool of SHM regions
         # self.shm = UntrackedSharedMemory(name=self.name, create=False)
         # self.np_shm = np.ndarray(
         #     (1, model_config.height, model_config.width, 3),
@@ -450,9 +462,7 @@ class RemoteObjectDetector:
         # self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         # self.detector_subscriber = ObjectDetectorSubscriber(name)
 
-    def detect(self, data, threshold=0.4):
-        # this function is called for each camera in its respective process
-        tensor_inputs, frame_name = data
+    def detect(self, tensor_inputs, threshold=0.4):
         detections = []
 
         if self.stop_event.is_set():
@@ -476,15 +486,19 @@ class RemoteObjectDetector:
         # self.fps.update()
         
         # better to keep pool size bigger than batchsize to avoid waiting for shm region to be free
-        for i in range(0,len(tensor_inputs),self.pool_size):
+        logger.warning(f"RemoteObjectDetector: Processing {len(tensor_inputs)} inputs with SHM pool size {self.shm_pool_size}")
+        for i in range(0,len(tensor_inputs),self.shm_pool_size):
             names = []
             # refresh every region shm with new input
-            for j in range(self.pool_size):
-                region_shm = self.shm_pool[j]
-                region_shm.inp_shm_np[:] = tensor_inputs[i*self.pool_size + j][:]
-                names.append(region_shm.inp_shm_name)
-            
-            self.detection_queue.put((names, frame_name))
+            for j in range(self.shm_pool_size):
+                region_shm = self.shm_pool[f"{self.name}-{j}"]
+                index = i + j
+                if index < len(tensor_inputs):
+                    logger.warning(f"RemoteObjectDetector: Sending input to region shm {region_shm.inp_shm_name} for input index {index}")
+                    region_shm.inp_shm_np[:] = tensor_inputs[index][:]
+                    names.append(region_shm.inp_shm_name)
+
+                    self.detection_queue.put(region_shm.inp_shm_name)
             
             # monitor for outputs for each region, post proc immediately if one's available.
             pending_regions = names.copy()
@@ -495,7 +509,9 @@ class RemoteObjectDetector:
                     region_shm = self.shm_pool[r]
                     result = region_shm.detector_subscriber.check_for_update(timeout=0.001)
                     if result is not None:
+                        logger.warning(f"Got detection for region {r}: {region_shm.out_shm_np.shape}")
                         for d in region_shm.out_shm_np:
+                            logger.warning(f"Region {r} detection: {d.shape}")
                             if d[1] < threshold:
                                 break
                             detections.append(
@@ -504,7 +520,9 @@ class RemoteObjectDetector:
                         self.fps.update()
                         pending_regions.remove(r)
             # end of while pending_regions
-                    
+            if pending_regions:
+                self.logger.warning(f"Timeout waiting for regions: {pending_regions}")
+
         return detections
 
     def cleanup(self):

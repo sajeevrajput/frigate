@@ -264,10 +264,6 @@ class OpenVINOModelRunner(BaseModelRunner):
             self.input_store = mp.Queue()
             self.response_store = mp.Queue()
 
-            # start async runner thread to wait for input and process results
-            # self.async_infer_thread = threading.Thread(target=self._async_runner, daemon=True)
-            # self.async_infer_thread.start()
-
         else:
             self.infer_request = self.compiled_model.create_infer_request()
         self.input_tensor: ov.Tensor | None = None

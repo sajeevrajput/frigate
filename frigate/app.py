@@ -338,7 +338,7 @@ class FrigateApp:
         )
 
     def start_detectors(self) -> None:
-        self.MAX_BATCHSIZE=8
+        self.MAX_BATCHSIZE = 8
         for name in self.config.cameras.keys():
             try:
                 largest_frame = max(
@@ -359,7 +359,7 @@ class FrigateApp:
 
             try:
                 shm_out = UntrackedSharedMemory(
-                    name=f"out-{name}", create=True, size=20 * 6 * 4
+                    name=f"out-{name}", create=True, size=20 * 6 * 4 * self.MAX_BATCHSIZE
                 )
             except FileExistsError:
                 shm_out = UntrackedSharedMemory(name=f"out-{name}")

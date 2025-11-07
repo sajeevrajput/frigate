@@ -31,7 +31,7 @@ class OvDetectorConfig(BaseDetectorConfig):
 
 
 class OvDetector(DetectionApi):
-    type_key = DETECTOR_KEY # disabling this class from loading in api_types
+    type_key = DETECTOR_KEY
     supported_models = [
         ModelTypeEnum.dfine,
         ModelTypeEnum.rfdetr,
@@ -47,7 +47,6 @@ class OvDetector(DetectionApi):
 
         self.h = detector_config.model.height
         self.w = detector_config.model.width
-        
 
         self.runner = OpenVINOModelRunner(
             model_path=detector_config.model.path,
@@ -145,14 +144,14 @@ class OvDetector(DetectionApi):
             (pos[0] + (pos[2] / 2)) / self.w,  # x_max
         ]
 
-    def detect_raw(self, data):
-        tensor_input, connection_id, frame_name = data
+    def detect_raw(self, tensor_input):
+        N = tensor_input.shape[0]
         if self.runner.is_async:
             # inference is done by async_runner thread with post processing handled in callback
             return
         
         if self.model_invalid:
-            return np.zeros((20, 6), np.float32)
+            return np.zeros((N, 20, 6), np.float32)
 
         if self.ov_model_type == ModelTypeEnum.dfine:
             # Use named inputs for dfine models
@@ -172,26 +171,26 @@ class OvDetector(DetectionApi):
         input_name = self.runner.get_input_names()[0]
         outputs = self.runner.run({input_name: tensor_input})
 
-        detections = np.zeros((20, 6), np.float32)
+        detections = np.zeros((N, 20, 6), np.float32)
 
         if self.ov_model_type == ModelTypeEnum.rfdetr:
             return post_process_rfdetr(outputs)
         elif self.ov_model_type == ModelTypeEnum.ssd:
-            results = outputs[0][0][0]
+            return detections
+            # results = outputs[0][0][0]
 
-            for i, (_, class_id, score, xmin, ymin, xmax, ymax) in enumerate(results):
-                if i == 20:
-                    break
-                detections[i] = [
-                    class_id,
-                    float(score),
-                    ymin,
-                    xmin,
-                    ymax,
-                    xmax,
-                ]
-            # return detections, connection_id, frame_name
-            return np.zeros((20, 6), np.float32), connection_id, frame_name
+            # for i, (_, class_id, score, xmin, ymin, xmax, ymax) in enumerate(results):
+            #     if i == 20:
+            #         break
+            #     detections[i] = [
+            #         class_id,
+            #         float(score),
+            #         ymin,
+            #         xmin,
+            #         ymax,
+            #         xmax,
+            #     ]
+            # return detections
         elif self.ov_model_type == ModelTypeEnum.yolonas:
             predictions = outputs[0]
 
@@ -212,8 +211,7 @@ class OvDetector(DetectionApi):
                 ]
             return detections
         elif self.ov_model_type == ModelTypeEnum.yologeneric:
-            # res = post_process_yolo(outputs, self.w, self.h), connection_id, frame_name
-            return detections, connection_id, frame_name
+            return post_process_yolo(outputs, self.w, self.h)
         elif self.ov_model_type == ModelTypeEnum.yolox:
             # [x, y, h, w, box_score, class_no_1, ..., class_no_80],
             results = outputs[0]
