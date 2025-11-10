@@ -128,7 +128,7 @@
         "documentation": "Lees de documentatie ",
         "title": "Audio moet via je camera komen en in go2rtc geconfigureerd zijn voor deze stream."
       },
-      "unavailable": "Audio is niet beschikbaar voor deze stroom",
+      "unavailable": "Audio is niet beschikbaar voor deze stream",
       "available": "Audio is beschikbaar voor deze stream"
     },
     "playInBackground": {
@@ -179,7 +179,7 @@
   },
   "noCameras": {
     "title": "Geen camera’s ingesteld",
-    "description": "Begin door een camera te verbinden.",
+    "description": "Begin door een camera te verbinden met Frigate.",
     "buttonText": "Camera toevoegen"
   }
 }

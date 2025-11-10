@@ -25,21 +25,25 @@ def is_arm64_platform() -> bool:
     return machine in ("aarch64", "arm64", "armv8", "armv7l")
 
 
-def get_ort_session_options() -> ort.SessionOptions | None:
+def get_ort_session_options(
+    is_complex_model: bool = False,
+) -> ort.SessionOptions | None:
     """Get ONNX Runtime session options with appropriate settings.
 
-    On ARM/RKNN platforms, use basic optimizations to avoid graph fusion issues
-    that can break certain models. On amd64, use default optimizations for better performance.
-    """
-    sess_options = None
+    Args:
+        is_complex_model: Whether the model needs basic optimization to avoid graph fusion issues.
 
-    if is_arm64_platform():
+    Returns:
+        SessionOptions with appropriate optimization level, or None for default settings.
+    """
+    if is_complex_model:
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = (
             ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
         )
+        return sess_options
 
-    return sess_options
+    return None
 
 
 # Import OpenVINO only when needed to avoid circular dependencies
@@ -108,6 +112,21 @@ class ONNXModelRunner(BaseModelRunner):
     """Run ONNX models using ONNX Runtime."""
 
     @staticmethod
+    def is_cpu_complex_model(model_type: str) -> bool:
+        """Check if model needs basic optimization level to avoid graph fusion issues.
+
+        Some models (like Jina-CLIP) have issues with aggressive optimizations like
+        SimplifiedLayerNormFusion that create or expect nodes that don't exist.
+        """
+        # Import here to avoid circular imports
+        from frigate.embeddings.types import EnrichmentModelTypeEnum
+
+        return model_type in [
+            EnrichmentModelTypeEnum.jina_v1.value,
+            EnrichmentModelTypeEnum.jina_v2.value,
+        ]
+
+    @staticmethod
     def is_migraphx_complex_model(model_type: str) -> bool:
         # Import here to avoid circular imports
         from frigate.detectors.detector_config import ModelTypeEnum
@@ -146,12 +165,12 @@ class CudaGraphRunner(BaseModelRunner):
     """
 
     @staticmethod
-    def is_complex_model(model_type: str) -> bool:
+    def is_model_supported(model_type: str) -> bool:
         # Import here to avoid circular imports
         from frigate.detectors.detector_config import ModelTypeEnum
         from frigate.embeddings.types import EnrichmentModelTypeEnum
 
-        return model_type in [
+        return model_type not in [
             ModelTypeEnum.yolonas.value,
             EnrichmentModelTypeEnum.paddleocr.value,
             EnrichmentModelTypeEnum.jina_v1.value,
@@ -219,11 +238,35 @@ class OpenVINOModelRunner(BaseModelRunner):
         # Import here to avoid circular imports
         from frigate.embeddings.types import EnrichmentModelTypeEnum
 
-        return model_type in [EnrichmentModelTypeEnum.paddleocr.value]
+        return model_type in [
+            EnrichmentModelTypeEnum.paddleocr.value,
+            EnrichmentModelTypeEnum.jina_v2.value,
+        ]
+
+    @staticmethod
+    def is_model_npu_supported(model_type: str) -> bool:
+        # Import here to avoid circular imports
+        from frigate.embeddings.types import EnrichmentModelTypeEnum
+
+        return model_type not in [
+            EnrichmentModelTypeEnum.paddleocr.value,
+            EnrichmentModelTypeEnum.jina_v1.value,
+            EnrichmentModelTypeEnum.jina_v2.value,
+            EnrichmentModelTypeEnum.arcface.value,
+        ]
 
     def __init__(self, model_path: str, device: str, model_type: str, **kwargs):
         self.model_path = model_path
         self.device = device
+
+        if device == "NPU" and not OpenVINOModelRunner.is_model_npu_supported(
+            model_type
+        ):
+            logger.warning(
+                f"OpenVINO model {model_type} is not supported on NPU, using GPU instead"
+            )
+            device = "GPU"
+
         self.complex_model = OpenVINOModelRunner.is_complex_model(model_type)
         
         # get async params
@@ -267,6 +310,10 @@ class OpenVINOModelRunner(BaseModelRunner):
         else:
             self.infer_request = self.compiled_model.create_infer_request()
         self.input_tensor: ov.Tensor | None = None
+
+        # Thread lock to prevent concurrent inference (needed for JinaV2 which shares
+        # one runner between text and vision embeddings called from different threads)
+        self._inference_lock = threading.Lock()
 
         if not self.complex_model:
             try:
@@ -318,59 +365,73 @@ class OpenVINOModelRunner(BaseModelRunner):
         Returns:
             List of output tensors
         """
-        # Handle single input case for backward compatibility
-        if (
-            len(inputs) == 1
-            and len(self.compiled_model.inputs) == 1
-            and self.input_tensor is not None
-        ):
-            # Single input case - use the pre-allocated tensor for efficiency
-            input_data = list(inputs.values())[0]
-            np.copyto(self.input_tensor.data, input_data)
-            self.infer_request.infer(self.input_tensor)
-        else:
-            if self.complex_model:
-                try:
-                    # This ensures the model starts with a clean state for each sequence
-                    # Important for RNN models like PaddleOCR recognition
-                    self.infer_request.reset_state()
-                except Exception:
-                    # this will raise an exception for models with AUTO set as the device
-                    pass
+        # Lock prevents concurrent access to infer_request
+        # Needed for JinaV2: genai thread (text) + embeddings thread (vision)
+        with self._inference_lock:
+            # Handle single input case for backward compatibility
+            if (
+                len(inputs) == 1
+                and len(self.compiled_model.inputs) == 1
+                and self.input_tensor is not None
+            ):
+                # Single input case - use the pre-allocated tensor for efficiency
+                input_data = list(inputs.values())[0]
+                np.copyto(self.input_tensor.data, input_data)
+                self.infer_request.infer(self.input_tensor)
+            else:
+                if self.complex_model:
+                    try:
+                        # This ensures the model starts with a clean state for each sequence
+                        # Important for RNN models like PaddleOCR recognition
+                        self.infer_request.reset_state()
+                    except Exception:
+                        # this will raise an exception for models with AUTO set as the device
+                        pass
 
-            # Multiple inputs case - set each input by name
-            for input_name, input_data in inputs.items():
-                # Find the input by name and its index
-                input_port = None
-                input_index = None
-                for idx, port in enumerate(self.compiled_model.inputs):
-                    if port.get_any_name() == input_name:
-                        input_port = port
-                        input_index = idx
-                        break
+                # Multiple inputs case - set each input by name
+                for input_name, input_data in inputs.items():
+                    # Find the input by name and its index
+                    input_port = None
+                    input_index = None
+                    for idx, port in enumerate(self.compiled_model.inputs):
+                        if port.get_any_name() == input_name:
+                            input_port = port
+                            input_index = idx
+                            break
 
-                if input_port is None:
-                    raise ValueError(f"Input '{input_name}' not found in model")
+                    if input_port is None:
+                        raise ValueError(f"Input '{input_name}' not found in model")
 
-                # Create tensor with the correct element type
-                input_element_type = input_port.get_element_type()
-                input_tensor = ov.Tensor(input_element_type, input_data.shape)
-                np.copyto(input_tensor.data, input_data)
+                    # Create tensor with the correct element type
+                    input_element_type = input_port.get_element_type()
 
-                # Set the input tensor for the specific port index
-                self.infer_request.set_input_tensor(input_index, input_tensor)
+                    # Ensure input data matches the expected dtype to prevent type mismatches
+                    # that can occur with models like Jina-CLIP v2 running on OpenVINO
+                    expected_dtype = input_element_type.to_dtype()
+                    if input_data.dtype != expected_dtype:
+                        logger.debug(
+                            f"Converting input '{input_name}' from {input_data.dtype} to {expected_dtype}"
+                        )
+                        input_data = input_data.astype(expected_dtype)
 
             # Run inference
-            t0=datetime.now().timestamp()
-            self.infer_request.infer()
-            logger.info(f"Inference took {datetime.now().timestamp() - t0:.3f}s, {self.infer_request.latency/1000:.4f}ms")
+                    input_tensor = ov.Tensor(input_element_type, input_data.shape)
+                    np.copyto(input_tensor.data, input_data)
 
-        # Get all output tensors
-        outputs = []
-        for i in range(len(self.compiled_model.outputs)):
-            outputs.append(self.infer_request.get_output_tensor(i).data)
+                    # Set the input tensor for the specific port index
+                    self.infer_request.set_input_tensor(input_index, input_tensor)
 
-        return outputs
+                t0 = datetime.now().timestamp()
+                # Run inference
+                self.infer_request.infer()
+                logger.info(f"Inference took {datetime.now().timestamp() - t0:.3f}s, {self.infer_request.latency/1000:.4f}ms")
+
+            # Get all output tensors
+            outputs = []
+            for i in range(len(self.compiled_model.outputs)):
+                outputs.append(self.infer_request.get_output_tensor(i).data)
+
+            return outputs
 
 
 class RKNNModelRunner(BaseModelRunner):
@@ -498,7 +559,7 @@ def get_optimized_runner(
             return OpenVINOModelRunner(model_path, device, model_type, **kwargs)
 
     if (
-        not CudaGraphRunner.is_complex_model(model_type)
+        CudaGraphRunner.is_model_supported(model_type)
         and providers[0] == "CUDAExecutionProvider"
     ):
         options[0] = {
@@ -526,7 +587,9 @@ def get_optimized_runner(
     return ONNXModelRunner(
         ort.InferenceSession(
             model_path,
-            sess_options=get_ort_session_options(),
+            sess_options=get_ort_session_options(
+                ONNXModelRunner.is_cpu_complex_model(model_type)
+            ),
             providers=providers,
             provider_options=options,
         )

@@ -19,6 +19,7 @@ import {
   ReviewSeverity,
   ReviewSummary,
   SegmentedReviewData,
+  ZoomLevel,
 } from "@/types/review";
 import { getChunkedTimeRange } from "@/utils/timelineUtil";
 import axios from "axios";
@@ -135,7 +136,7 @@ export default function EventView({
 
   const [selectedReviews, setSelectedReviews] = useState<ReviewSegment[]>([]);
   const onSelectReview = useCallback(
-    (review: ReviewSegment, ctrl: boolean) => {
+    (review: ReviewSegment, ctrl: boolean, detail: boolean) => {
       if (selectedReviews.length > 0 || ctrl) {
         const index = selectedReviews.findIndex((r) => r.id === review.id);
 
@@ -155,17 +156,31 @@ export default function EventView({
           setSelectedReviews(copy);
         }
       } else {
+        // If a specific date is selected in the calendar and it's after the event start,
+        // use the selected date instead of the event start time
+        const effectiveStartTime =
+          timeRange.after > review.start_time
+            ? timeRange.after
+            : review.start_time;
+
         onOpenRecording({
           camera: review.camera,
-          startTime: review.start_time - REVIEW_PADDING,
+          startTime: effectiveStartTime - REVIEW_PADDING,
           severity: review.severity,
+          timelineType: detail ? "detail" : undefined,
         });
 
         review.has_been_reviewed = true;
         markItemAsReviewed(review);
       }
     },
-    [selectedReviews, setSelectedReviews, onOpenRecording, markItemAsReviewed],
+    [
+      selectedReviews,
+      setSelectedReviews,
+      onOpenRecording,
+      markItemAsReviewed,
+      timeRange.after,
+    ],
   );
   const onSelectAllReviews = useCallback(() => {
     if (!currentReviewItems || currentReviewItems.length == 0) {
@@ -401,7 +416,6 @@ export default function EventView({
             onSelectAllReviews={onSelectAllReviews}
             setSelectedReviews={setSelectedReviews}
             pullLatestData={pullLatestData}
-            onOpenRecording={onOpenRecording}
           />
         )}
         {severity == "significant_motion" && (
@@ -441,11 +455,14 @@ type DetectionReviewProps = {
   loading: boolean;
   markItemAsReviewed: (review: ReviewSegment) => void;
   markAllItemsAsReviewed: (currentItems: ReviewSegment[]) => void;
-  onSelectReview: (review: ReviewSegment, ctrl: boolean) => void;
+  onSelectReview: (
+    review: ReviewSegment,
+    ctrl: boolean,
+    detail: boolean,
+  ) => void;
   onSelectAllReviews: () => void;
   setSelectedReviews: (reviews: ReviewSegment[]) => void;
   pullLatestData: () => void;
-  onOpenRecording: (recordingInfo: RecordingStartingPoint) => void;
 };
 function DetectionReview({
   contentRef,
@@ -465,7 +482,6 @@ function DetectionReview({
   onSelectAllReviews,
   setSelectedReviews,
   pullLatestData,
-  onOpenRecording,
 }: DetectionReviewProps) {
   const { t } = useTranslation(["views/events"]);
 
@@ -501,7 +517,7 @@ function DetectionReview({
     timestampSpread: 15,
   });
 
-  const possibleZoomLevels = useMemo(
+  const possibleZoomLevels: ZoomLevel[] = useMemo(
     () => [
       { segmentDuration: 60, timestampSpread: 15 },
       { segmentDuration: 30, timestampSpread: 5 },
@@ -515,6 +531,14 @@ function DetectionReview({
       setZoomSettings(possibleZoomLevels[newZoomLevel]);
     },
     [possibleZoomLevels],
+  );
+
+  const currentZoomLevel = useMemo(
+    () =>
+      possibleZoomLevels.findIndex(
+        (level) => level.segmentDuration === zoomSettings.segmentDuration,
+      ),
+    [possibleZoomLevels, zoomSettings.segmentDuration],
   );
 
   const { isZooming, zoomDirection } = useTimelineZoom({
@@ -749,16 +773,7 @@ function DetectionReview({
                           ctrl: boolean,
                           detail: boolean,
                         ) => {
-                          if (detail) {
-                            onOpenRecording({
-                              camera: review.camera,
-                              startTime: review.start_time - REVIEW_PADDING,
-                              severity: review.severity,
-                              timelineType: "detail",
-                            });
-                          } else {
-                            onSelectReview(review, ctrl);
-                          }
+                          onSelectReview(review, ctrl, detail);
                         }}
                       />
                     </div>
@@ -799,7 +814,7 @@ function DetectionReview({
         </div>
       </div>
       <div className="flex w-[65px] flex-row md:w-[110px]">
-        <div className="no-scrollbar w-[55px] md:w-[100px]">
+        <div className="no-scrollbar relative w-[55px] md:w-[100px]">
           {loading ? (
             <Skeleton className="size-full" />
           ) : (
@@ -821,6 +836,8 @@ function DetectionReview({
               dense={isMobile}
               isZooming={isZooming}
               zoomDirection={zoomDirection}
+              possibleZoomLevels={possibleZoomLevels}
+              currentZoomLevel={currentZoomLevel}
             />
           )}
         </div>
@@ -895,11 +912,20 @@ function MotionReview({
 
   // motion data
 
+  const { alignStartDateToTimeline, alignEndDateToTimeline } = useTimelineUtils(
+    {
+      segmentDuration,
+    },
+  );
+
+  const alignedAfter = alignStartDateToTimeline(timeRange.after);
+  const alignedBefore = alignEndDateToTimeline(timeRange.before);
+
   const { data: motionData } = useSWR<MotionData[]>([
     "review/activity/motion",
     {
-      before: timeRange.before,
-      after: timeRange.after,
+      before: alignedBefore,
+      after: alignedAfter,
       scale: segmentDuration / 2,
       cameras: filter?.cameras?.join(",") ?? null,
     },
@@ -1005,10 +1031,6 @@ function MotionReview({
       };
     }
   }, [playing, playbackRate, nextTimestamp, setPlaying, timeRange]);
-
-  const { alignStartDateToTimeline } = useTimelineUtils({
-    segmentDuration,
-  });
 
   const getDetectionType = useCallback(
     (cameraName: string) => {
@@ -1159,6 +1181,7 @@ function MotionReview({
             dense={isMobileOnly}
             isZooming={false}
             zoomDirection={null}
+            alwaysShowMotionLine={true}
           />
         ) : (
           <Skeleton className="size-full" />

@@ -10,6 +10,12 @@ import useSWR from "swr";
 import { baseUrl } from "@/api/baseUrl";
 import { isMobile } from "react-device-detect";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { TooltipPortal } from "@radix-ui/react-tooltip";
 
 export type Step3FormData = {
   examplesGenerated: boolean;
@@ -317,6 +323,34 @@ export default function Step3ChooseExamples({
     return unclassifiedImages.length === 0;
   }, [unclassifiedImages]);
 
+  // For state models on the last class, require all images to be classified
+  const isLastClass = currentClassIndex === allClasses.length - 1;
+  const canProceed = useMemo(() => {
+    if (
+      step1Data.modelType === "state" &&
+      isLastClass &&
+      !allImagesClassified
+    ) {
+      return false;
+    }
+    return true;
+  }, [step1Data.modelType, isLastClass, allImagesClassified]);
+
+  const handleBack = useCallback(() => {
+    if (currentClassIndex > 0) {
+      const previousClass = allClasses[currentClassIndex - 1];
+      setCurrentClassIndex((prev) => prev - 1);
+
+      // Restore selections for the previous class
+      const previousSelections = Object.entries(imageClassifications)
+        .filter(([_, className]) => className === previousClass)
+        .map(([imageName, _]) => imageName);
+      setSelectedImages(new Set(previousSelections));
+    } else {
+      onBack();
+    }
+  }, [currentClassIndex, allClasses, imageClassifications, onBack]);
+
   return (
     <div className="flex flex-col gap-6">
       {isTraining ? (
@@ -420,23 +454,38 @@ export default function Step3ChooseExamples({
 
       {!isTraining && (
         <div className="flex flex-col gap-3 pt-3 sm:flex-row sm:justify-end sm:gap-4">
-          <Button type="button" onClick={onBack} className="sm:flex-1">
+          <Button type="button" onClick={handleBack} className="sm:flex-1">
             {t("button.back", { ns: "common" })}
           </Button>
-          <Button
-            type="button"
-            onClick={
-              allImagesClassified
-                ? handleContinue
-                : handleContinueClassification
-            }
-            variant="select"
-            className="flex items-center justify-center gap-2 sm:flex-1"
-            disabled={!hasGenerated || isGenerating || isProcessing}
-          >
-            {isProcessing && <ActivityIndicator className="size-4" />}
-            {t("button.continue", { ns: "common" })}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                onClick={
+                  allImagesClassified
+                    ? handleContinue
+                    : handleContinueClassification
+                }
+                variant="select"
+                className="flex items-center justify-center gap-2 sm:flex-1"
+                disabled={
+                  !hasGenerated || isGenerating || isProcessing || !canProceed
+                }
+              >
+                {isProcessing && <ActivityIndicator className="size-4" />}
+                {t("button.continue", { ns: "common" })}
+              </Button>
+            </TooltipTrigger>
+            {!canProceed && (
+              <TooltipPortal>
+                <TooltipContent>
+                  {t("wizard.step3.allImagesRequired", {
+                    count: unclassifiedImages.length,
+                  })}
+                </TooltipContent>
+              </TooltipPortal>
+            )}
+          </Tooltip>
         </div>
       )}
     </div>

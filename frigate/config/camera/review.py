@@ -106,34 +106,38 @@ class GenAIReviewConfig(FrigateBaseModel):
     )
     activity_context_prompt: str = Field(
         default="""### Normal Activity Indicators (Level 0)
-- Known/verified people in any zone
+- Known/verified people in any zone at any time
 - People with pets in residential areas
-- Brief activity near vehicles: approaching vehicles, brief standing, then leaving or entering vehicle (unloading, loading, checking something)
-- Deliveries or services: brief approach to doors/porches, standing briefly, placing or retrieving items, then leaving
-- Access to private areas: entering back yards, garages, or homes (with or without visible purpose in frame)
-- Brief movement through semi-public areas (driveways, front yards) with items or approaching structure/vehicle
-- Activity on public areas only (sidewalks, streets) without entering property
-- Services/maintenance workers with tools, uniforms, or vehicles
+- Deliveries or services during daytime/evening (6 AM - 10 PM): carrying packages to doors/porches, placing items, leaving
+- Services/maintenance workers with visible tools, uniforms, or service vehicles during daytime
+- Activity confined to public areas only (sidewalks, streets) without entering property at any time
 
 ### Suspicious Activity Indicators (Level 1)
-- Testing or attempting to open doors/windows on vehicles or buildings
-- Taking items that don't belong to them (stealing packages, objects from porches/driveways)
+- **Testing or attempting to open doors/windows/handles on vehicles or buildings** — ALWAYS Level 1 regardless of time or duration
+- **Unidentified person in private areas (driveways, near vehicles/buildings) during late night/early morning (11 PM - 5 AM)** — ALWAYS Level 1 regardless of activity or duration
+- Taking items that don't belong to them (packages, objects from porches/driveways)
 - Climbing or jumping fences/barriers to access property
 - Attempting to conceal actions or items from view
-- Prolonged presence without purpose: remaining in same area (near vehicles, private zones) throughout most/all of the sequence without clear activity or task. Brief stops (a few seconds of standing) are normal; sustained presence (most of the duration) without interaction is concerning.
-- Activity at unusual hours (very late night/early morning) combined with suspicious behavior patterns
+- Prolonged loitering: remaining in same area without visible purpose throughout most of the sequence
 
 ### Critical Threat Indicators (Level 2)
 - Holding break-in tools (crowbars, pry bars, bolt cutters)
 - Weapons visible (guns, knives, bats used aggressively)
 - Forced entry in progress
 - Physical aggression or violence
-- Active property damage or theft
+- Active property damage or theft in progress
 
 ### Assessment Guidance
-When evaluating activity, first check if it matches Normal Activity Indicators. If it clearly matches normal patterns (brief vehicle access, delivery behavior, known people, pet activity), assign Level 0. Only consider Level 1 if the activity shows clear suspicious behaviors that don't fit normal patterns (testing access, stealing items, lingering across many frames without task, forced entry attempts).
+Evaluate in this order:
 
-These patterns are guidance, not rigid rules. Consider the complete context: time, zone, objects, and sequence of actions. Brief activity with apparent purpose is generally normal. Sustained problematic behavior or clear security violations warrant elevation.""",
+1. **If person is verified/known** → Level 0 regardless of time or activity
+2. **If person is unidentified:**
+   - Check time: If late night/early morning (11 PM - 5 AM) AND in private areas (driveways, near vehicles/buildings) → Level 1
+   - Check actions: If testing doors/handles, taking items, climbing → Level 1
+   - Otherwise, if daytime/evening (6 AM - 10 PM) with clear legitimate purpose (delivery, service worker) → Level 0
+3. **Escalate to Level 2 if:** Weapons, break-in tools, forced entry in progress, violence, or active property damage visible (escalates from Level 0 or 1)
+
+The mere presence of an unidentified person in private areas during late night hours is inherently suspicious and warrants human review, regardless of what activity they appear to be doing or how brief the sequence is.""",
         title="Custom activity context prompt defining normal and suspicious activity patterns for this property.",
     )
 

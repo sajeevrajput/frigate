@@ -227,6 +227,9 @@ class CustomStateClassificationProcessor(RealTimeProcessorApi):
             self.tensor_output_details[0]["index"]
         )[0]
         probs = res / res.sum(axis=0)
+        logger.debug(
+            f"{self.model_config.name} Ran state classification with probabilities: {probs}"
+        )
         best_id = np.argmax(probs)
         score = round(probs[best_id], 2)
         self.__update_metrics(datetime.datetime.now().timestamp() - now)
@@ -418,8 +421,8 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
             obj_data["box"][2],
             obj_data["box"][3],
             max(
-                obj_data["box"][1] - obj_data["box"][0],
-                obj_data["box"][3] - obj_data["box"][2],
+                obj_data["box"][2] - obj_data["box"][0],
+                obj_data["box"][3] - obj_data["box"][1],
             ),
             1.0,
         )
@@ -455,6 +458,9 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
             self.tensor_output_details[0]["index"]
         )[0]
         probs = res / res.sum(axis=0)
+        logger.debug(
+            f"{self.model_config.name} Ran object classification with probabilities: {probs}"
+        )
         best_id = np.argmax(probs)
         score = round(probs[best_id], 2)
         self.__update_metrics(datetime.datetime.now().timestamp() - now)
@@ -466,6 +472,7 @@ class CustomObjectClassificationProcessor(RealTimeProcessorApi):
             now,
             self.labelmap[best_id],
             score,
+            max_files=200,
         )
 
         if score < self.model_config.threshold:
@@ -529,6 +536,7 @@ def write_classification_attempt(
     timestamp: float,
     label: str,
     score: float,
+    max_files: int = 100,
 ) -> None:
     if "-" in label:
         label = label.replace("-", "_")
@@ -544,5 +552,8 @@ def write_classification_attempt(
     )
 
     # delete oldest face image if maximum is reached
-    if len(files) > 100:
-        os.unlink(os.path.join(folder, files[-1]))
+    try:
+        if len(files) > max_files:
+            os.unlink(os.path.join(folder, files[-1]))
+    except FileNotFoundError:
+        pass

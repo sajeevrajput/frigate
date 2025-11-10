@@ -23,7 +23,6 @@ import { StatusBarMessagesContext } from "@/context/statusbar-provider";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import { LuExternalLink } from "react-icons/lu";
-import { capitalizeFirstLetter } from "@/utils/stringUtil";
 import { MdCircle } from "react-icons/md";
 import { cn } from "@/lib/utils";
 import { Trans, useTranslation } from "react-i18next";
@@ -42,6 +41,8 @@ import CameraWizardDialog from "@/components/settings/CameraWizardDialog";
 import { IoMdArrowRoundBack } from "react-icons/io";
 import { isDesktop } from "react-device-detect";
 import { useCameraFriendlyName } from "@/hooks/use-camera-friendly-name";
+import { resolveZoneName } from "@/hooks/use-zone-friendly-name";
+import { formatList } from "@/utils/stringUtil";
 
 type CameraSettingsViewProps = {
   selectedCamera: string;
@@ -86,11 +87,18 @@ export default function CameraSettingsView({
 
   // zones and labels
 
+  const getZoneName = useCallback(
+    (zoneId: string, cameraId?: string) =>
+      resolveZoneName(config, zoneId, cameraId),
+    [config],
+  );
+
   const zones = useMemo(() => {
     if (cameraConfig) {
       return Object.entries(cameraConfig.zones).map(([name, zoneData]) => ({
         camera: cameraConfig.name,
         name,
+        friendly_name: cameraConfig.zones[name].friendly_name,
         objects: zoneData.objects,
         color: zoneData.color,
       }));
@@ -99,27 +107,27 @@ export default function CameraSettingsView({
 
   const alertsLabels = useMemo(() => {
     return cameraConfig?.review.alerts.labels
-      ? cameraConfig.review.alerts.labels
-          .map((label) =>
+      ? formatList(
+          cameraConfig.review.alerts.labels.map((label) =>
             getTranslatedLabel(
               label,
               cameraConfig?.audio?.listen?.includes(label) ? "audio" : "object",
             ),
-          )
-          .join(", ")
+          ),
+        )
       : "";
   }, [cameraConfig]);
 
   const detectionsLabels = useMemo(() => {
     return cameraConfig?.review.detections.labels
-      ? cameraConfig.review.detections.labels
-          .map((label) =>
+      ? formatList(
+          cameraConfig.review.detections.labels.map((label) =>
             getTranslatedLabel(
               label,
               cameraConfig?.audio?.listen?.includes(label) ? "audio" : "object",
             ),
-          )
-          .join(", ")
+          ),
+        )
       : "";
   }, [cameraConfig]);
 
@@ -525,8 +533,14 @@ export default function CameraSettingsView({
                                             }}
                                           />
                                         </FormControl>
-                                        <FormLabel className="font-normal smart-capitalize">
-                                          {zone.name.replaceAll("_", " ")}
+                                        <FormLabel
+                                          className={cn(
+                                            "font-normal",
+                                            !zone.friendly_name &&
+                                              "smart-capitalize",
+                                          )}
+                                        >
+                                          {zone.friendly_name || zone.name}
                                         </FormLabel>
                                       </FormItem>
                                     )}
@@ -548,14 +562,11 @@ export default function CameraSettingsView({
                                   "cameraReview.reviewClassification.zoneObjectAlertsTips",
                                   {
                                     alertsLabels,
-                                    zone: watchedAlertsZones
-                                      .map((zone) =>
-                                        capitalizeFirstLetter(zone).replaceAll(
-                                          "_",
-                                          " ",
-                                        ),
-                                      )
-                                      .join(", "),
+                                    zone: formatList(
+                                      watchedAlertsZones.map((zone) =>
+                                        getZoneName(zone),
+                                      ),
+                                    ),
                                     cameraName: selectCameraName,
                                   },
                                 )
@@ -627,8 +638,14 @@ export default function CameraSettingsView({
                                               }}
                                             />
                                           </FormControl>
-                                          <FormLabel className="font-normal smart-capitalize">
-                                            {zone.name.replaceAll("_", " ")}
+                                          <FormLabel
+                                            className={cn(
+                                              "font-normal",
+                                              !zone.friendly_name &&
+                                                "smart-capitalize",
+                                            )}
+                                          >
+                                            {zone.friendly_name || zone.name}
                                           </FormLabel>
                                         </FormItem>
                                       )}
@@ -667,14 +684,11 @@ export default function CameraSettingsView({
                                   i18nKey="cameraReview.reviewClassification.zoneObjectDetectionsTips.text"
                                   values={{
                                     detectionsLabels,
-                                    zone: watchedDetectionsZones
-                                      .map((zone) =>
-                                        capitalizeFirstLetter(zone).replaceAll(
-                                          "_",
-                                          " ",
-                                        ),
-                                      )
-                                      .join(", "),
+                                    zone: formatList(
+                                      watchedDetectionsZones.map((zone) =>
+                                        getZoneName(zone),
+                                      ),
+                                    ),
                                     cameraName: selectCameraName,
                                   }}
                                   ns="views/settings"
@@ -684,14 +698,11 @@ export default function CameraSettingsView({
                                   i18nKey="cameraReview.reviewClassification.zoneObjectDetectionsTips.notSelectDetections"
                                   values={{
                                     detectionsLabels,
-                                    zone: watchedDetectionsZones
-                                      .map((zone) =>
-                                        capitalizeFirstLetter(zone).replaceAll(
-                                          "_",
-                                          " ",
-                                        ),
-                                      )
-                                      .join(", "),
+                                    zone: formatList(
+                                      watchedDetectionsZones.map((zone) =>
+                                        getZoneName(zone),
+                                      ),
+                                    ),
                                     cameraName: selectCameraName,
                                   }}
                                   ns="views/settings"
@@ -717,11 +728,11 @@ export default function CameraSettingsView({
                   <div className="flex w-full flex-row items-center gap-2 pt-2 md:w-[25%]">
                     <Button
                       className="flex flex-1"
-                      aria-label={t("button.cancel", { ns: "common" })}
+                      aria-label={t("button.reset", { ns: "common" })}
                       onClick={onCancel}
                       type="button"
                     >
-                      <Trans>button.cancel</Trans>
+                      <Trans>button.reset</Trans>
                     </Button>
                     <Button
                       variant="select"

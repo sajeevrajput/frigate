@@ -159,7 +159,7 @@ export default function CreateTriggerDialog({
   });
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    if (trigger) {
+    if (trigger && existingTriggerNames.includes(trigger.name)) {
       onEdit({ ...values });
     } else {
       onCreate(
@@ -258,6 +258,7 @@ export default function CreateTriggerDialog({
               nameLabel={t("triggers.dialog.form.name.title")}
               nameDescription={t("triggers.dialog.form.name.description")}
               placeholderName={t("triggers.dialog.form.name.placeholder")}
+              idVisible={!!trigger}
             />
 
             <FormField

@@ -22,6 +22,7 @@ import {
   ReviewFilter,
   ReviewSegment,
   ReviewSummary,
+  ZoomLevel,
 } from "@/types/review";
 import { getChunkedTimeDay } from "@/utils/timelineUtil";
 import {
@@ -56,12 +57,13 @@ import { useFullscreen } from "@/hooks/use-fullscreen";
 import { useTimezone } from "@/hooks/use-date-utils";
 import { useTimelineZoom } from "@/hooks/use-timeline-zoom";
 import { useTranslation } from "react-i18next";
+import { useTimelineUtils } from "@/hooks/use-timeline-utils";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CameraNameLabel } from "@/components/camera/CameraNameLabel";
+import { CameraNameLabel } from "@/components/camera/FriendlyNameLabel";
 import { useAllowedCameras } from "@/hooks/use-allowed-cameras";
 import { DetailStreamProvider } from "@/context/detail-stream-context";
 import { GenAISummaryDialog } from "@/components/overlay/chip/GenAISummaryChip";
@@ -883,7 +885,7 @@ function Timeline({
     timestampSpread: 15,
   });
 
-  const possibleZoomLevels = useMemo(
+  const possibleZoomLevels: ZoomLevel[] = useMemo(
     () => [
       { segmentDuration: 30, timestampSpread: 15 },
       { segmentDuration: 15, timestampSpread: 5 },
@@ -899,6 +901,14 @@ function Timeline({
     [possibleZoomLevels],
   );
 
+  const currentZoomLevel = useMemo(
+    () =>
+      possibleZoomLevels.findIndex(
+        (level) => level.segmentDuration === zoomSettings.segmentDuration,
+      ),
+    [possibleZoomLevels, zoomSettings.segmentDuration],
+  );
+
   const { isZooming, zoomDirection } = useTimelineZoom({
     zoomSettings,
     zoomLevels: possibleZoomLevels,
@@ -908,12 +918,20 @@ function Timeline({
   });
 
   // motion data
+  const { alignStartDateToTimeline, alignEndDateToTimeline } = useTimelineUtils(
+    {
+      segmentDuration: zoomSettings.segmentDuration,
+    },
+  );
+
+  const alignedAfter = alignStartDateToTimeline(timeRange.after);
+  const alignedBefore = alignEndDateToTimeline(timeRange.before);
 
   const { data: motionData, isLoading } = useSWR<MotionData[]>([
     "review/activity/motion",
     {
-      before: timeRange.before,
-      after: timeRange.after,
+      before: alignedBefore,
+      after: alignedAfter,
       scale: Math.round(zoomSettings.segmentDuration / 2),
       cameras: mainCamera,
     },
@@ -922,9 +940,9 @@ function Timeline({
   const { data: noRecordings } = useSWR<RecordingSegment[]>([
     "recordings/unavailable",
     {
-      before: timeRange.before,
-      after: timeRange.after,
-      scale: Math.round(zoomSettings.segmentDuration / 2),
+      before: alignedBefore,
+      after: alignedAfter,
+      scale: Math.round(zoomSettings.segmentDuration),
       cameras: mainCamera,
     },
   ]);
@@ -952,12 +970,11 @@ function Timeline({
         "relative overflow-hidden",
         isDesktop
           ? cn(
-              "no-scrollbar overflow-y-auto",
               timelineType == "timeline"
                 ? "w-[100px] flex-shrink-0"
                 : timelineType == "detail"
                   ? "min-w-[20rem] max-w-[30%] flex-shrink-0 flex-grow-0 basis-[30rem] md:min-w-[20rem] md:max-w-[25%] lg:min-w-[30rem] lg:max-w-[33%]"
-                  : "w-60 flex-shrink-0",
+                  : "w-80 flex-shrink-0",
             )
           : cn(
               timelineType == "timeline"
@@ -968,7 +985,7 @@ function Timeline({
             ),
       )}
     >
-      {isMobile && (
+      {isMobile && timelineType == "timeline" && (
         <GenAISummaryDialog review={activeReviewItem} onOpen={onAnalysisOpen} />
       )}
 
@@ -1001,6 +1018,9 @@ function Timeline({
             onHandlebarDraggingChange={(scrubbing) => setScrubbing(scrubbing)}
             isZooming={isZooming}
             zoomDirection={zoomDirection}
+            onZoomChange={handleZoomChange}
+            possibleZoomLevels={possibleZoomLevels}
+            currentZoomLevel={currentZoomLevel}
           />
         ) : (
           <Skeleton className="size-full" />

@@ -10,7 +10,9 @@
     "general": "Configuración General - Frigate",
     "frigatePlus": "Configuración de Frigate+ - Frigate",
     "notifications": "Configuración de Notificaciones - Frigate",
-    "enrichments": "Configuración de Análisis Avanzado - Frigate"
+    "enrichments": "Configuración de Análisis Avanzado - Frigate",
+    "cameraManagement": "Administrar Cámaras - Frigate",
+    "cameraReview": "Revisar Configuración de Cámaras - Frigate"
   },
   "menu": {
     "cameras": "Configuración de Cámara",
@@ -24,7 +26,9 @@
     "notifications": "Notificaciones",
     "enrichments": "Análisis avanzado",
     "triggers": "Disparadores",
-    "roles": "Rols"
+    "roles": "Rols",
+    "cameraManagement": "Administración",
+    "cameraReview": "Revisar"
   },
   "dialog": {
     "unsavedChanges": {
@@ -861,7 +865,9 @@
         "createRole": "Rol {{role}} creado exitosamente",
         "updateCameras": "Cámara actualizada para el rol {{role}}",
         "deleteRole": "Rol {{role}} eliminado exitosamente",
-        "userRolesUpdated": "{{count}} usuarios asignados a este rol han sido actualizados a 'visor', que tiene acceso a todas las cámaras."
+        "userRolesUpdated_one": "{{count}} usuarios asignados a este rol han sido actualizados a 'visor', que tiene acceso a todas las cámaras.",
+        "userRolesUpdated_many": "",
+        "userRolesUpdated_other": ""
       },
       "error": {
         "createRoleFailed": "Creación de rol fallida: {{errorMessage}}",

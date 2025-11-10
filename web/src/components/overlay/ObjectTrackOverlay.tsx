@@ -12,6 +12,10 @@ import { TooltipPortal } from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { Event } from "@/types/event";
+import { resolveZoneName } from "@/hooks/use-zone-friendly-name";
+
+// Use a small tolerance (10ms) for browsers with seek precision by-design issues
+const TOLERANCE = 0.01;
 
 type ObjectTrackOverlayProps = {
   camera: string;
@@ -55,6 +59,47 @@ export default function ObjectTrackOverlay({
 
   const effectiveCurrentTime = currentTime - annotationOffset / 1000;
 
+  const {
+    pathStroke,
+    pointRadius,
+    pointStroke,
+    zoneStroke,
+    boxStroke,
+    highlightRadius,
+  } = useMemo(() => {
+    const BASE_WIDTH = 1280;
+    const BASE_HEIGHT = 720;
+    const BASE_PATH_STROKE = 5;
+    const BASE_POINT_RADIUS = 7;
+    const BASE_POINT_STROKE = 3;
+    const BASE_ZONE_STROKE = 5;
+    const BASE_BOX_STROKE = 5;
+    const BASE_HIGHLIGHT_RADIUS = 5;
+
+    const scale = Math.sqrt(
+      (videoWidth * videoHeight) / (BASE_WIDTH * BASE_HEIGHT),
+    );
+
+    const pathStroke = Math.max(1, Math.round(BASE_PATH_STROKE * scale));
+    const pointRadius = Math.max(2, Math.round(BASE_POINT_RADIUS * scale));
+    const pointStroke = Math.max(1, Math.round(BASE_POINT_STROKE * scale));
+    const zoneStroke = Math.max(1, Math.round(BASE_ZONE_STROKE * scale));
+    const boxStroke = Math.max(1, Math.round(BASE_BOX_STROKE * scale));
+    const highlightRadius = Math.max(
+      2,
+      Math.round(BASE_HIGHLIGHT_RADIUS * scale),
+    );
+
+    return {
+      pathStroke,
+      pointRadius,
+      pointStroke,
+      zoneStroke,
+      boxStroke,
+      highlightRadius,
+    };
+  }, [videoWidth, videoHeight]);
+
   // Fetch all event data in a single request (CSV ids)
   const { data: eventsData } = useSWR<Event[]>(
     selectedObjectIds.length > 0
@@ -70,6 +115,10 @@ export default function ObjectTrackOverlay({
     { revalidateOnFocus: false },
   );
 
+  const getZonesFriendlyNames = (zones: string[], config: FrigateConfig) => {
+    return zones?.map((zone) => resolveZoneName(config, zone)) ?? [];
+  };
+
   const timelineResults = useMemo(() => {
     // Group timeline entries by source_id
     if (!timelineData) return selectedObjectIds.map(() => []);
@@ -83,8 +132,19 @@ export default function ObjectTrackOverlay({
     }
 
     // Return timeline arrays in the same order as selectedObjectIds
-    return selectedObjectIds.map((id) => grouped[id] || []);
-  }, [selectedObjectIds, timelineData]);
+    return selectedObjectIds.map((id) => {
+      const entries = grouped[id] || [];
+      return entries.map((event) => ({
+        ...event,
+        data: {
+          ...event.data,
+          zones_friendly_names: config
+            ? getZonesFriendlyNames(event.data?.zones, config)
+            : [],
+        },
+      }));
+    });
+  }, [selectedObjectIds, timelineData, config]);
 
   const typeColorMap = useMemo(
     () => ({
@@ -166,41 +226,50 @@ export default function ObjectTrackOverlay({
             }) || [];
 
         // show full path once current time has reached the object's start time
-        const combinedPoints = [...savedPathPoints, ...eventSequencePoints]
-          .sort((a, b) => a.timestamp - b.timestamp)
-          .filter(
-            (point) =>
-              currentTime >= (eventData?.start_time ?? 0) &&
-              point.timestamp >= (eventData?.start_time ?? 0) &&
-              point.timestamp <= (eventData?.end_time ?? Infinity),
-          );
+        // event.start_time is in DETECT stream time, so convert it to record stream time for comparison
+        const eventStartTimeRecord =
+          (eventData?.start_time ?? 0) + annotationOffset / 1000;
+
+        const allPoints = [...savedPathPoints, ...eventSequencePoints].sort(
+          (a, b) => a.timestamp - b.timestamp,
+        );
+        const combinedPoints = allPoints.filter(
+          (point) =>
+            currentTime >= eventStartTimeRecord - TOLERANCE &&
+            point.timestamp <= effectiveCurrentTime + TOLERANCE,
+        );
 
         // Get color for this object
         const label = eventData?.label || "unknown";
         const color = getObjectColor(label, objectId);
 
-        // Get current zones
+        // zones (with tolerance for browsers with seek precision by-design issues)
         const currentZones =
           timelineData
             ?.filter(
               (event: TrackingDetailsSequence) =>
-                event.timestamp <= effectiveCurrentTime,
+                event.timestamp <= effectiveCurrentTime + TOLERANCE,
             )
             .sort(
               (a: TrackingDetailsSequence, b: TrackingDetailsSequence) =>
                 b.timestamp - a.timestamp,
             )[0]?.data?.zones || [];
 
-        // Get current bounding box
-        const currentBox = timelineData
-          ?.filter(
-            (event: TrackingDetailsSequence) =>
-              event.timestamp <= effectiveCurrentTime && event.data.box,
-          )
+        // bounding box - only show if there's a timeline event at/near the current time with a box
+        // Search all timeline events (not just those before current time) to find one matching the seek position
+        const nearbyTimelineEvent = timelineData
+          ?.filter((event: TrackingDetailsSequence) => event.data.box)
           .sort(
             (a: TrackingDetailsSequence, b: TrackingDetailsSequence) =>
-              b.timestamp - a.timestamp,
-          )[0]?.data?.box;
+              Math.abs(a.timestamp - effectiveCurrentTime) -
+              Math.abs(b.timestamp - effectiveCurrentTime),
+          )
+          .find(
+            (event: TrackingDetailsSequence) =>
+              Math.abs(event.timestamp - effectiveCurrentTime) <= TOLERANCE,
+          );
+
+        const currentBox = nearbyTimelineEvent?.data?.box;
 
         return {
           objectId,
@@ -221,6 +290,7 @@ export default function ObjectTrackOverlay({
     getObjectColor,
     config,
     camera,
+    annotationOffset,
   ]);
 
   // Collect all zones across all objects
@@ -274,9 +344,10 @@ export default function ObjectTrackOverlay({
 
   const handlePointClick = useCallback(
     (timestamp: number) => {
-      onSeekToTime?.(timestamp, false);
+      // Convert detect stream timestamp to record stream timestamp before seeking
+      onSeekToTime?.(timestamp + annotationOffset / 1000, false);
     },
-    [onSeekToTime],
+    [onSeekToTime, annotationOffset],
   );
 
   const zonePolygons = useMemo(() => {
@@ -324,7 +395,7 @@ export default function ObjectTrackOverlay({
           points={zone.points}
           fill={zone.fill}
           stroke={zone.stroke}
-          strokeWidth="5"
+          strokeWidth={zoneStroke}
           opacity="0.7"
         />
       ))}
@@ -344,7 +415,7 @@ export default function ObjectTrackOverlay({
                 d={generateStraightPath(absolutePositions)}
                 fill="none"
                 stroke={objData.color}
-                strokeWidth="5"
+                strokeWidth={pathStroke}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -356,13 +427,13 @@ export default function ObjectTrackOverlay({
                   <circle
                     cx={pos.x}
                     cy={pos.y}
-                    r="7"
+                    r={pointRadius}
                     fill={getPointColor(
                       objData.color,
                       pos.lifecycle_item?.class_type,
                     )}
                     stroke="white"
-                    strokeWidth="3"
+                    strokeWidth={pointStroke}
                     style={{ cursor: onSeekToTime ? "pointer" : "default" }}
                     onClick={() => handlePointClick(pos.timestamp)}
                   />
@@ -391,7 +462,7 @@ export default function ObjectTrackOverlay({
                   height={objData.currentBox[3] * videoHeight}
                   fill="none"
                   stroke={objData.color}
-                  strokeWidth="5"
+                  strokeWidth={boxStroke}
                   opacity="0.9"
                 />
                 <circle
@@ -403,10 +474,10 @@ export default function ObjectTrackOverlay({
                     (objData.currentBox[1] + objData.currentBox[3]) *
                     videoHeight
                   }
-                  r="5"
+                  r={highlightRadius}
                   fill="rgb(255, 255, 0)" // yellow highlight
                   stroke={objData.color}
-                  strokeWidth="5"
+                  strokeWidth={boxStroke}
                   opacity="1"
                 />
               </g>

@@ -44,7 +44,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { isDesktop } from "react-device-detect";
+import { isDesktop, isMobileOnly } from "react-device-detect";
 import { Trans, useTranslation } from "react-i18next";
 import { LuPencil, LuTrash2 } from "react-icons/lu";
 import { toast } from "sonner";
@@ -102,6 +102,12 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
         position: "top-center",
       });
       setWasTraining(false);
+      refreshDataset();
+    } else if (modelState == "failed") {
+      toast.error(t("toast.error.trainingFailed"), {
+        position: "top-center",
+      });
+      setWasTraining(false);
     }
     // only refresh when modelState changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -112,11 +118,26 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
   const { data: trainImages, mutate: refreshTrain } = useSWR<string[]>(
     `classification/${model.name}/train`,
   );
-  const { data: dataset, mutate: refreshDataset } = useSWR<{
-    [id: string]: string[];
+  const { data: datasetResponse, mutate: refreshDataset } = useSWR<{
+    categories: { [id: string]: string[] };
+    training_metadata: {
+      has_trained: boolean;
+      last_training_date: string | null;
+      last_training_image_count: number;
+      current_image_count: number;
+      new_images_count: number;
+    } | null;
   }>(`classification/${model.name}/dataset`);
 
+  const dataset = datasetResponse?.categories || {};
+  const trainingMetadata = datasetResponse?.training_metadata;
+
   const [trainFilter, setTrainFilter] = useApiFilter<TrainFilter>();
+
+  const refreshAll = useCallback(() => {
+    refreshTrain();
+    refreshDataset();
+  }, [refreshTrain, refreshDataset]);
 
   // image multiselect
 
@@ -172,7 +193,7 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
           error.response?.data?.detail ||
           "Unknown error";
 
-        toast.error(t("toast.error.trainingFailed", { errorMessage }), {
+        toast.error(t("toast.error.trainingFailedToStart", { errorMessage }), {
           position: "top-center",
         });
       });
@@ -182,12 +203,44 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
     null,
   );
 
+  const onRename = useCallback(
+    (old_name: string, new_name: string) => {
+      axios
+        .put(`/classification/${model.name}/dataset/${old_name}/rename`, {
+          new_category: new_name,
+        })
+        .then((resp) => {
+          if (resp.status == 200) {
+            toast.success(
+              t("toast.success.renamedCategory", { name: new_name }),
+              {
+                position: "top-center",
+              },
+            );
+            setPageToggle(new_name);
+            refreshDataset();
+          }
+        })
+        .catch((error) => {
+          const errorMessage =
+            error.response?.data?.message ||
+            error.response?.data?.detail ||
+            "Unknown error";
+          toast.error(t("toast.error.renameCategoryFailed", { errorMessage }), {
+            position: "top-center",
+          });
+        });
+    },
+    [model, setPageToggle, refreshDataset, t],
+  );
+
   const onDelete = useCallback(
-    (ids: string[], isName: boolean = false) => {
+    (ids: string[], isName: boolean = false, category?: string) => {
+      const targetCategory = category || pageToggle;
       const api =
-        pageToggle == "train"
+        targetCategory == "train"
           ? `/classification/${model.name}/train/delete`
-          : `/classification/${model.name}/dataset/${pageToggle}/delete`;
+          : `/classification/${model.name}/dataset/${targetCategory}/delete`;
 
       axios
         .post(api, { ids })
@@ -327,31 +380,39 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
       </AlertDialog>
 
       <div className="flex flex-row justify-between gap-2 p-2 align-middle">
-        <div className="flex flex-row items-center justify-center gap-2">
-          <Button
-            className="flex items-center gap-2.5 rounded-lg"
-            aria-label={t("label.back", { ns: "common" })}
-            onClick={() => navigate(-1)}
-          >
-            <IoMdArrowRoundBack className="size-5 text-secondary-foreground" />
-            {isDesktop && (
-              <div className="text-primary">
-                {t("button.back", { ns: "common" })}
-              </div>
-            )}
-          </Button>
-          <LibrarySelector
-            pageToggle={pageToggle}
-            dataset={dataset || {}}
-            trainImages={trainImages || []}
-            setPageToggle={setPageToggle}
-            onDelete={onDelete}
-            onRename={() => {}}
-          />
-        </div>
+        {(isDesktop || !selectedImages?.length) && (
+          <div className="flex flex-row items-center justify-center gap-2">
+            <Button
+              className="flex items-center gap-2.5 rounded-lg"
+              aria-label={t("label.back", { ns: "common" })}
+              onClick={() => navigate(-1)}
+            >
+              <IoMdArrowRoundBack className="size-5 text-secondary-foreground" />
+              {isDesktop && (
+                <div className="text-primary">
+                  {t("button.back", { ns: "common" })}
+                </div>
+              )}
+            </Button>
+
+            <LibrarySelector
+              pageToggle={pageToggle}
+              dataset={dataset || {}}
+              trainImages={trainImages || []}
+              setPageToggle={setPageToggle}
+              onDelete={onDelete}
+              onRename={onRename}
+            />
+          </div>
+        )}
         {selectedImages?.length > 0 ? (
-          <div className="flex items-center justify-center gap-2">
-            <div className="mx-1 flex w-48 items-center justify-center text-sm text-muted-foreground">
+          <div
+            className={cn(
+              "flex w-full items-center justify-end gap-2",
+              isMobileOnly && "justify-between",
+            )}
+          >
+            <div className="flex w-48 items-center justify-center text-sm text-muted-foreground">
               <div className="p-1">{`${selectedImages.length} selected`}</div>
               <div className="p-1">{"|"}</div>
               <div
@@ -376,19 +437,48 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
               filterValues={{ classes: Object.keys(dataset || {}) }}
               onUpdateFilter={setTrainFilter}
             />
-            <Button
-              className="flex justify-center gap-2"
-              onClick={trainModel}
-              variant="select"
-              disabled={modelState != "complete"}
-            >
-              {modelState == "training" ? (
-                <ActivityIndicator size={20} />
-              ) : (
-                <HiSparkles className="text-white" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  className="flex justify-center gap-2"
+                  onClick={trainModel}
+                  variant={modelState == "failed" ? "destructive" : "select"}
+                  disabled={
+                    (modelState != "complete" && modelState != "failed") ||
+                    (trainingMetadata?.new_images_count ?? 0) === 0
+                  }
+                >
+                  {modelState == "training" ? (
+                    <ActivityIndicator size={20} />
+                  ) : (
+                    <HiSparkles className="text-white" />
+                  )}
+                  {isDesktop && (
+                    <>
+                      {t("button.trainModel")}
+                      {trainingMetadata?.new_images_count !== undefined &&
+                        trainingMetadata.new_images_count > 0 && (
+                          <span className="text-sm text-selected-foreground">
+                            ({trainingMetadata.new_images_count})
+                          </span>
+                        )}
+                    </>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              {((trainingMetadata?.new_images_count ?? 0) === 0 ||
+                (modelState != "complete" && modelState != "failed")) && (
+                <TooltipPortal>
+                  <TooltipContent>
+                    {modelState == "training"
+                      ? t("tooltip.trainingInProgress")
+                      : trainingMetadata?.new_images_count === 0
+                        ? t("tooltip.noNewImages")
+                        : t("tooltip.modelNotReady")}
+                  </TooltipContent>
+                </TooltipPortal>
               )}
-              {isDesktop && t("button.trainModel")}
-            </Button>
+            </Tooltip>
           </div>
         )}
       </div>
@@ -400,7 +490,7 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
           trainImages={trainImages || []}
           trainFilter={trainFilter}
           selectedImages={selectedImages}
-          onRefresh={refreshTrain}
+          onRefresh={refreshAll}
           onClickImages={onClickImages}
           onDelete={onDelete}
         />
@@ -424,7 +514,7 @@ type LibrarySelectorProps = {
   dataset: { [id: string]: string[] };
   trainImages: string[];
   setPageToggle: (toggle: string) => void;
-  onDelete: (ids: string[], isName: boolean) => void;
+  onDelete: (ids: string[], isName: boolean, category?: string) => void;
   onRename: (old_name: string, new_name: string) => void;
 };
 function LibrarySelector({
@@ -436,15 +526,31 @@ function LibrarySelector({
   onRename,
 }: LibrarySelectorProps) {
   const { t } = useTranslation(["views/classificationModel"]);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [renameClass, setRenameFace] = useState<string | null>(null);
 
-  const handleDeleteFace = useCallback(
+  // data
+
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [renameClass, setRenameClass] = useState<string | null>(null);
+  const pageTitle = useMemo(() => {
+    if (pageToggle != "train") {
+      return pageToggle;
+    }
+
+    if (isMobileOnly) {
+      return t("train.titleShort");
+    }
+
+    return t("train.title");
+  }, [pageToggle, t]);
+
+  // interaction
+
+  const handleDeleteCategory = useCallback(
     (name: string) => {
-      // Get all image IDs for this face
+      // Get all image IDs for this category
       const imageIds = dataset?.[name] || [];
 
-      onDelete(imageIds, true);
+      onDelete(imageIds, true, name);
       setPageToggle("train");
     },
     [dataset, onDelete, setPageToggle],
@@ -452,7 +558,7 @@ function LibrarySelector({
 
   const handleSetOpen = useCallback(
     (open: boolean) => {
-      setRenameFace(open ? renameClass : null);
+      setRenameClass(open ? renameClass : null);
     },
     [renameClass],
   );
@@ -479,7 +585,7 @@ function LibrarySelector({
               className="text-white"
               onClick={() => {
                 if (confirmDelete) {
-                  handleDeleteFace(confirmDelete);
+                  handleDeleteCategory(confirmDelete);
                   setConfirmDelete(null);
                 }
               }}
@@ -497,17 +603,17 @@ function LibrarySelector({
         description={t("renameCategory.desc", { name: renameClass })}
         onSave={(newName) => {
           onRename(renameClass!, newName);
-          setRenameFace(null);
+          setRenameClass(null);
         }}
         defaultValue={renameClass || ""}
         regexPattern={/^[\p{L}\p{N}\s'_-]{1,50}$/u}
         regexErrorMessage={t("description.invalidName")}
       />
 
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button className="flex justify-between smart-capitalize">
-            {pageToggle == "train" ? t("train.title") : pageToggle}
+            {pageTitle}
             <span className="ml-2 text-primary-variant">
               (
               {(pageToggle &&
@@ -555,48 +661,50 @@ function LibrarySelector({
                   ({dataset?.[id].length})
                 </span>
               </div>
-              <div className="flex gap-0.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRenameFace(id);
-                      }}
-                    >
-                      <LuPencil className="size-4 text-primary" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipPortal>
-                    <TooltipContent>
-                      {t("button.renameCategory")}
-                    </TooltipContent>
-                  </TooltipPortal>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setConfirmDelete(id);
-                      }}
-                    >
-                      <LuTrash2 className="size-4 text-destructive" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipPortal>
-                    <TooltipContent>
-                      {t("button.deleteCategory")}
-                    </TooltipContent>
-                  </TooltipPortal>
-                </Tooltip>
-              </div>
+              {id != "none" && (
+                <div className="flex gap-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenameClass(id);
+                        }}
+                      >
+                        <LuPencil className="size-4 text-primary" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipPortal>
+                      <TooltipContent>
+                        {t("button.renameCategory")}
+                      </TooltipContent>
+                    </TooltipPortal>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(id);
+                        }}
+                      >
+                        <LuTrash2 className="size-4 text-destructive" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipPortal>
+                      <TooltipContent>
+                        {t("button.deleteCategory")}
+                      </TooltipContent>
+                    </TooltipPortal>
+                  </Tooltip>
+                </div>
+              )}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
@@ -715,17 +823,11 @@ function TrainGrid({
             return false;
           }
 
-          if (
-            trainFilter.min_score &&
-            trainFilter.min_score > data.score / 100.0
-          ) {
+          if (trainFilter.min_score && trainFilter.min_score > data.score) {
             return false;
           }
 
-          if (
-            trainFilter.max_score &&
-            trainFilter.max_score < data.score / 100.0
-          ) {
+          if (trainFilter.max_score && trainFilter.max_score < data.score) {
             return false;
           }
 
@@ -877,7 +979,7 @@ function ObjectTrainGrid({
   // selection
 
   const [selectedEvent, setSelectedEvent] = useState<Event>();
-  const [dialogTab, setDialogTab] = useState<SearchTab>("details");
+  const [dialogTab, setDialogTab] = useState<SearchTab>("snapshot");
 
   // handlers
 
@@ -945,6 +1047,7 @@ function ObjectTrainGrid({
                 selectedItems={selectedImages}
                 i18nLibrary="views/classificationModel"
                 objectType={model.object_config?.objects?.at(0) ?? "Object"}
+                noClassificationLabel="details.none"
                 onClick={(data) => {
                   if (data) {
                     onClickImages([data.filename], true);

@@ -15,7 +15,7 @@ import useSWR from "swr";
 import ActivityIndicator from "../indicators/activity-indicator";
 import { Event } from "@/types/event";
 import { getIconForLabel } from "@/utils/iconUtil";
-import { ReviewSegment } from "@/types/review";
+import { REVIEW_PADDING, ReviewSegment } from "@/types/review";
 import { LuChevronDown, LuCircle, LuChevronRight } from "react-icons/lu";
 import { getTranslatedLabel } from "@/utils/i18n";
 import EventMenu from "@/components/timeline/EventMenu";
@@ -23,6 +23,12 @@ import { FrigatePlusDialog } from "@/components/overlay/dialog/FrigatePlusDialog
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Link } from "react-router-dom";
+import { Switch } from "@/components/ui/switch";
+import { usePersistence } from "@/hooks/use-persistence";
+import { isDesktop } from "react-device-detect";
+import { resolveZoneName } from "@/hooks/use-zone-friendly-name";
+import { PiSlidersHorizontalBold } from "react-icons/pi";
+import { MdAutoAwesome } from "react-icons/md";
 
 type DetailStreamProps = {
   reviewItems?: ReviewSegment[];
@@ -49,8 +55,13 @@ export default function DetailStream({
     elementRef: scrollRef,
   });
 
-  const effectiveTime = currentTime + annotationOffset / 1000;
+  const effectiveTime = currentTime - annotationOffset / 1000;
   const [upload, setUpload] = useState<Event | undefined>(undefined);
+  const [controlsExpanded, setControlsExpanded] = useState(false);
+  const [alwaysExpandActive, setAlwaysExpandActive] = usePersistence(
+    "detailStreamActiveExpanded",
+    true,
+  );
 
   const onSeekCheckPlaying = (timestamp: number) => {
     onSeek(timestamp, isPlaying);
@@ -168,7 +179,7 @@ export default function DetailStream({
   }
 
   return (
-    <div className="relative">
+    <>
       <FrigatePlusDialog
         upload={upload}
         onClose={() => setUpload(undefined)}
@@ -179,38 +190,81 @@ export default function DetailStream({
         }}
       />
 
-      <div
-        ref={scrollRef}
-        className="scrollbar-container h-[calc(100vh-70px)] overflow-y-auto"
-      >
-        <div className="space-y-4 py-2">
-          {reviewItems?.length === 0 ? (
-            <div className="py-8 text-center text-muted-foreground">
-              {t("detail.noDataFound")}
+      <div className="relative flex h-full flex-col">
+        <div
+          ref={scrollRef}
+          className="scrollbar-container flex-1 overflow-y-auto overflow-x-hidden pb-14"
+        >
+          <div className="space-y-4 py-2">
+            {reviewItems?.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground">
+                {t("detail.noDataFound")}
+              </div>
+            ) : (
+              reviewItems?.map((review: ReviewSegment) => {
+                const id = `review-${review.id ?? review.start_time ?? Math.floor(review.start_time ?? 0)}`;
+                return (
+                  <ReviewGroup
+                    key={id}
+                    id={id}
+                    review={review}
+                    config={config}
+                    onSeek={onSeekCheckPlaying}
+                    effectiveTime={effectiveTime}
+                    annotationOffset={annotationOffset}
+                    isActive={activeReviewId == id}
+                    onActivate={() => setActiveReviewId(id)}
+                    onOpenUpload={(e) => setUpload(e)}
+                    alwaysExpandActive={alwaysExpandActive}
+                  />
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div
+          className={cn(
+            "absolute bottom-0 left-0 right-0 z-30 rounded-t-md border border-secondary-highlight bg-background_alt shadow-md",
+            isDesktop && "border-b-0",
+          )}
+        >
+          <button
+            onClick={() => setControlsExpanded(!controlsExpanded)}
+            className="flex w-full items-center justify-between p-3"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <PiSlidersHorizontalBold className="size-4" />
+              <span>{t("detail.settings")}</span>
             </div>
-          ) : (
-            reviewItems?.map((review: ReviewSegment) => {
-              const id = `review-${review.id ?? review.start_time ?? Math.floor(review.start_time ?? 0)}`;
-              return (
-                <ReviewGroup
-                  key={id}
-                  id={id}
-                  review={review}
-                  config={config}
-                  onSeek={onSeekCheckPlaying}
-                  effectiveTime={effectiveTime}
-                  isActive={activeReviewId == id}
-                  onActivate={() => setActiveReviewId(id)}
-                  onOpenUpload={(e) => setUpload(e)}
-                />
-              );
-            })
+            {controlsExpanded ? (
+              <LuChevronDown className="size-4 text-primary-variant" />
+            ) : (
+              <LuChevronRight className="size-4 text-primary-variant" />
+            )}
+          </button>
+          {controlsExpanded && (
+            <div className="space-y-3 px-3 pb-3">
+              <AnnotationOffsetSlider />
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">
+                    {t("detail.alwaysExpandActive.title")}
+                  </label>
+                  <Switch
+                    checked={alwaysExpandActive}
+                    onCheckedChange={setAlwaysExpandActive}
+                  />
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {t("detail.alwaysExpandActive.desc")}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
-
-      <AnnotationOffsetSlider />
-    </div>
+    </>
   );
 }
 
@@ -223,6 +277,8 @@ type ReviewGroupProps = {
   onActivate?: () => void;
   onOpenUpload?: (e: Event) => void;
   effectiveTime?: number;
+  annotationOffset: number;
+  alwaysExpandActive?: boolean;
 };
 
 function ReviewGroup({
@@ -234,10 +290,21 @@ function ReviewGroup({
   onActivate,
   onOpenUpload,
   effectiveTime,
+  annotationOffset,
+  alwaysExpandActive = false,
 }: ReviewGroupProps) {
   const { t } = useTranslation("views/events");
   const [open, setOpen] = useState(false);
   const start = review.start_time ?? 0;
+  // review.start_time is in detect time, convert to record for seeking
+  const startRecord = start + annotationOffset / 1000;
+
+  // Auto-expand when this review becomes active and alwaysExpandActive is enabled
+  useEffect(() => {
+    if (isActive && alwaysExpandActive) {
+      setOpen(true);
+    }
+  }, [isActive, alwaysExpandActive]);
 
   const displayTime = formatUnixTimestampToDateTime(start, {
     timezone: config.ui.timezone,
@@ -298,7 +365,11 @@ function ReviewGroup({
   return (
     <div
       data-review-id={id}
-      className="cursor-pointer rounded-lg bg-secondary py-3"
+      className={`mx-1 cursor-pointer rounded-lg bg-secondary px-0 py-3 outline outline-[2px] -outline-offset-[1.8px] ${
+        isActive
+          ? "shadow-selected outline-selected"
+          : "outline-transparent duration-500"
+      }`}
     >
       <div
         className={cn(
@@ -307,21 +378,21 @@ function ReviewGroup({
         )}
         onClick={() => {
           onActivate?.();
-          onSeek(start);
+          onSeek(startRecord);
         }}
       >
         <div className="ml-4 mr-2 mt-1.5 flex flex-row items-start">
           <LuCircle
             className={cn(
-              "size-3",
-              isActive
-                ? "fill-selected text-selected"
-                : "fill-muted duration-500 dark:fill-secondary-highlight dark:text-secondary-highlight",
+              "size-3 duration-500",
+              review.severity == "alert"
+                ? "fill-severity_alert text-severity_alert"
+                : "fill-severity_detection text-severity_detection",
             )}
           />
         </div>
-        <div className="mr-3 flex w-full justify-between">
-          <div className="ml-1 flex flex-col items-start gap-1.5">
+        <div className="mr-3 grid w-full grid-cols-[1fr_auto] gap-2">
+          <div className="ml-1 flex min-w-0 flex-col gap-1.5">
             <div className="flex flex-row gap-3">
               <div className="text-sm font-medium">{displayTime}</div>
               <div className="relative flex items-center gap-2 text-white">
@@ -337,8 +408,9 @@ function ReviewGroup({
             </div>
             <div className="flex flex-col gap-0.5">
               {review.data.metadata?.title && (
-                <div className="mb-1 text-sm text-primary-variant">
-                  {review.data.metadata.title}
+                <div className="mb-1 flex min-w-0 items-center gap-1 text-sm text-primary-variant">
+                  <MdAutoAwesome className="size-3 shrink-0" />
+                  <span className="truncate">{review.data.metadata.title}</span>
                 </div>
               )}
               <div className="flex flex-row items-center gap-1.5">
@@ -360,7 +432,7 @@ function ReviewGroup({
               e.stopPropagation();
               setOpen((v) => !v);
             }}
-            className="ml-2 inline-flex items-center justify-center rounded p-1 hover:bg-secondary/10"
+            className="inline-flex items-center justify-center self-center rounded p-1 hover:bg-secondary/10"
           >
             {open ? (
               <LuChevronDown className="size-4 text-primary-variant" />
@@ -385,7 +457,9 @@ function ReviewGroup({
                   <EventList
                     key={event.id}
                     event={event}
+                    review={review}
                     effectiveTime={effectiveTime}
+                    annotationOffset={annotationOffset}
                     onSeek={onSeek}
                     onOpenUpload={onOpenUpload}
                   />
@@ -418,13 +492,17 @@ function ReviewGroup({
 
 type EventListProps = {
   event: Event;
+  review: ReviewSegment;
   effectiveTime?: number;
+  annotationOffset: number;
   onSeek: (ts: number, play?: boolean) => void;
   onOpenUpload?: (e: Event) => void;
 };
 function EventList({
   event,
+  review,
   effectiveTime,
+  annotationOffset,
   onSeek,
   onOpenUpload,
 }: EventListProps) {
@@ -441,14 +519,17 @@ function EventList({
     if (event) {
       setSelectedObjectIds([]);
       setSelectedObjectIds([event.id]);
-      onSeek(event.start_time);
+      // event.start_time is detect time, convert to record
+      const recordTime = event.start_time + annotationOffset / 1000;
+      onSeek(recordTime);
     } else {
       setSelectedObjectIds([]);
     }
   };
 
   const handleTimelineClick = (ts: number, play?: boolean) => {
-    handleObjectSelect(event);
+    setSelectedObjectIds([]);
+    setSelectedObjectIds([event.id]);
     onSeek(ts, play);
   };
 
@@ -490,7 +571,6 @@ function EventList({
               )}
               onClick={(e) => {
                 e.stopPropagation();
-                onSeek(event.start_time);
                 handleObjectSelect(event);
               }}
               role="button"
@@ -504,7 +584,6 @@ function EventList({
               className="flex flex-1 items-center gap-2"
               onClick={(e) => {
                 e.stopPropagation();
-                onSeek(event.start_time);
                 handleObjectSelect(event);
               }}
               role="button"
@@ -540,9 +619,11 @@ function EventList({
 
         <div className="mt-2">
           <ObjectTimeline
+            review={review}
             eventId={event.id}
             onSeek={handleTimelineClick}
             effectiveTime={effectiveTime}
+            annotationOffset={annotationOffset}
             startTime={event.start_time}
             endTime={event.end_time}
           />
@@ -557,6 +638,7 @@ type LifecycleItemProps = {
   isActive?: boolean;
   onSeek?: (timestamp: number, play?: boolean) => void;
   effectiveTime?: number;
+  annotationOffset: number;
   isTimelineActive?: boolean;
 };
 
@@ -565,6 +647,7 @@ function LifecycleItem({
   isActive,
   onSeek,
   effectiveTime,
+  annotationOffset,
   isTimelineActive = false,
 }: LifecycleItemProps) {
   const { t } = useTranslation("views/events");
@@ -618,7 +701,8 @@ function LifecycleItem({
     <div
       role="button"
       onClick={() => {
-        onSeek?.(item.timestamp, false);
+        const recordTimestamp = item.timestamp + annotationOffset / 1000;
+        onSeek?.(recordTimestamp, false);
       }}
       className={cn(
         "flex cursor-pointer items-center gap-2 text-sm text-primary-variant",
@@ -684,25 +768,55 @@ function LifecycleItem({
 
 // Fetch and render timeline entries for a single event id on demand.
 function ObjectTimeline({
+  review,
   eventId,
   onSeek,
   effectiveTime,
+  annotationOffset,
   startTime,
   endTime,
 }: {
+  review: ReviewSegment;
   eventId: string;
   onSeek: (ts: number, play?: boolean) => void;
   effectiveTime?: number;
+  annotationOffset: number;
   startTime?: number;
   endTime?: number;
 }) {
   const { t } = useTranslation("views/events");
-  const { data: timeline, isValidating } = useSWR<TrackingDetailsSequence[]>([
+  const { data: fullTimeline, isValidating } = useSWR<
+    TrackingDetailsSequence[]
+  >([
     "timeline",
     {
       source_id: eventId,
     },
   ]);
+
+  const { data: config } = useSWR<FrigateConfig>("config");
+  const timeline = useMemo(() => {
+    if (!fullTimeline) {
+      return fullTimeline;
+    }
+
+    return fullTimeline
+      .filter(
+        (t) =>
+          t.timestamp >= review.start_time - REVIEW_PADDING &&
+          (review.end_time == undefined ||
+            t.timestamp <= review.end_time + REVIEW_PADDING),
+      )
+      .map((event) => ({
+        ...event,
+        data: {
+          ...event.data,
+          zones_friendly_names: event.data?.zones?.map((zone) =>
+            resolveZoneName(config, zone),
+          ),
+        },
+      }));
+  }, [config, fullTimeline, review]);
 
   if (isValidating && (!timeline || timeline.length === 0)) {
     return <ActivityIndicator className="ml-2 size-3" />;
@@ -710,7 +824,7 @@ function ObjectTimeline({
 
   if (!timeline || timeline.length === 0) {
     return (
-      <div className="py-2 text-sm text-muted-foreground">
+      <div className="ml-8 text-sm text-muted-foreground">
         {t("detail.noObjectDetailData")}
       </div>
     );
@@ -793,6 +907,7 @@ function ObjectTimeline({
               onSeek={onSeek}
               isActive={isActive}
               effectiveTime={effectiveTime}
+              annotationOffset={annotationOffset}
               isTimelineActive={isWithinEventRange}
             />
           );

@@ -31,14 +31,16 @@ from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
 from frigate.config import FrigateConfig
 from frigate.config.camera import DetectConfig
-from frigate.const import CLIPS_DIR, FACE_DIR
+from frigate.const import CLIPS_DIR, FACE_DIR, MODEL_CACHE_DIR
 from frigate.embeddings import EmbeddingsContext
 from frigate.models import Event
 from frigate.util.classification import (
     collect_object_classification_examples,
     collect_state_classification_examples,
+    get_dataset_image_count,
+    read_training_metadata,
 )
-from frigate.util.path import get_event_snapshot
+from frigate.util.file import get_event_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +114,18 @@ def reclassify_face(request: Request, body: dict = None):
     context: EmbeddingsContext = request.app.embeddings
     response = context.reprocess_face(training_file)
 
+    if not isinstance(response, dict):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": "Could not process request.",
+            },
+        )
+
     return JSONResponse(
+        status_code=200 if response.get("success", True) else 400,
         content=response,
-        status_code=200,
     )
 
 
@@ -555,23 +566,54 @@ def get_classification_dataset(name: str):
     dataset_dir = os.path.join(CLIPS_DIR, sanitize_filename(name), "dataset")
 
     if not os.path.exists(dataset_dir):
-        return JSONResponse(status_code=200, content={})
+        return JSONResponse(
+            status_code=200, content={"categories": {}, "training_metadata": None}
+        )
 
-    for name in os.listdir(dataset_dir):
-        category_dir = os.path.join(dataset_dir, name)
+    for category_name in os.listdir(dataset_dir):
+        category_dir = os.path.join(dataset_dir, category_name)
 
         if not os.path.isdir(category_dir):
             continue
 
-        dataset_dict[name] = []
+        dataset_dict[category_name] = []
 
         for file in filter(
             lambda f: (f.lower().endswith((".webp", ".png", ".jpg", ".jpeg"))),
             os.listdir(category_dir),
         ):
-            dataset_dict[name].append(file)
+            dataset_dict[category_name].append(file)
 
-    return JSONResponse(status_code=200, content=dataset_dict)
+    # Get training metadata
+    metadata = read_training_metadata(sanitize_filename(name))
+    current_image_count = get_dataset_image_count(sanitize_filename(name))
+
+    if metadata is None:
+        training_metadata = {
+            "has_trained": False,
+            "last_training_date": None,
+            "last_training_image_count": 0,
+            "current_image_count": current_image_count,
+            "new_images_count": current_image_count,
+        }
+    else:
+        last_training_count = metadata.get("last_training_image_count", 0)
+        new_images_count = max(0, current_image_count - last_training_count)
+        training_metadata = {
+            "has_trained": True,
+            "last_training_date": metadata.get("last_training_date"),
+            "last_training_image_count": last_training_count,
+            "current_image_count": current_image_count,
+            "new_images_count": new_images_count,
+        }
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "categories": dataset_dict,
+            "training_metadata": training_metadata,
+        },
+    )
 
 
 @router.get(
@@ -662,10 +704,104 @@ def delete_classification_dataset_images(
         if os.path.isfile(file_path):
             os.unlink(file_path)
 
+    if os.path.exists(folder) and not os.listdir(folder):
+        os.rmdir(folder)
+
     return JSONResponse(
-        content=({"success": True, "message": "Successfully deleted faces."}),
+        content=({"success": True, "message": "Successfully deleted images."}),
         status_code=200,
     )
+
+
+@router.put(
+    "/classification/{name}/dataset/{old_category}/rename",
+    response_model=GenericResponse,
+    dependencies=[Depends(require_role(["admin"]))],
+    summary="Rename a classification category",
+    description="""Renames a classification category for a given classification model.
+    The old category must exist and the new name must be valid. Returns a success message or an error if the name is invalid.""",
+)
+def rename_classification_category(
+    request: Request, name: str, old_category: str, body: dict = None
+):
+    config: FrigateConfig = request.app.frigate_config
+
+    if name not in config.classification.custom:
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": f"{name} is not a known classification model.",
+                }
+            ),
+            status_code=404,
+        )
+
+    json: dict[str, Any] = body or {}
+    new_category = sanitize_filename(json.get("new_category", ""))
+
+    if not new_category:
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": "New category name is required.",
+                }
+            ),
+            status_code=400,
+        )
+
+    old_folder = os.path.join(
+        CLIPS_DIR, sanitize_filename(name), "dataset", sanitize_filename(old_category)
+    )
+    new_folder = os.path.join(
+        CLIPS_DIR, sanitize_filename(name), "dataset", new_category
+    )
+
+    if not os.path.exists(old_folder):
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": f"Category {old_category} does not exist.",
+                }
+            ),
+            status_code=404,
+        )
+
+    if os.path.exists(new_folder):
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": f"Category {new_category} already exists.",
+                }
+            ),
+            status_code=400,
+        )
+
+    try:
+        os.rename(old_folder, new_folder)
+        return JSONResponse(
+            content=(
+                {
+                    "success": True,
+                    "message": f"Successfully renamed category to {new_category}.",
+                }
+            ),
+            status_code=200,
+        )
+    except Exception as e:
+        logger.error(f"Error renaming category: {e}")
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": "Failed to rename category",
+                }
+            ),
+            status_code=500,
+        )
 
 
 @router.post(
@@ -723,7 +859,7 @@ def categorize_classification_image(request: Request, name: str, body: dict = No
     os.unlink(training_file)
 
     return JSONResponse(
-        content=({"success": True, "message": "Successfully deleted faces."}),
+        content=({"success": True, "message": "Successfully categorized image."}),
         status_code=200,
     )
 
@@ -761,7 +897,7 @@ def delete_classification_train_images(request: Request, name: str, body: dict =
             os.unlink(file_path)
 
     return JSONResponse(
-        content=({"success": True, "message": "Successfully deleted faces."}),
+        content=({"success": True, "message": "Successfully deleted images."}),
         status_code=200,
     )
 
@@ -802,5 +938,48 @@ async def generate_object_examples(request: Request, body: GenerateObjectExample
 
     return JSONResponse(
         content={"success": True, "message": "Example generation completed"},
+        status_code=200,
+    )
+
+
+@router.delete(
+    "/classification/{name}",
+    response_model=GenericResponse,
+    dependencies=[Depends(require_role(["admin"]))],
+    summary="Delete a classification model",
+    description="""Deletes a specific classification model and all its associated data.
+    The name must exist in the classification models. Returns a success message or an error if the name is invalid.""",
+)
+def delete_classification_model(request: Request, name: str):
+    config: FrigateConfig = request.app.frigate_config
+
+    if name not in config.classification.custom:
+        return JSONResponse(
+            content=(
+                {
+                    "success": False,
+                    "message": f"{name} is not a known classification model.",
+                }
+            ),
+            status_code=404,
+        )
+
+    # Delete the classification model's data directory in clips
+    data_dir = os.path.join(CLIPS_DIR, sanitize_filename(name))
+    if os.path.exists(data_dir):
+        shutil.rmtree(data_dir)
+
+    # Delete the classification model's files in model_cache
+    model_dir = os.path.join(MODEL_CACHE_DIR, sanitize_filename(name))
+    if os.path.exists(model_dir):
+        shutil.rmtree(model_dir)
+
+    return JSONResponse(
+        content=(
+            {
+                "success": True,
+                "message": f"Successfully deleted classification model {name}.",
+            }
+        ),
         status_code=200,
     )

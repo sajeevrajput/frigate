@@ -1,8 +1,9 @@
 import { baseUrl } from "@/api/baseUrl";
 import ClassificationModelWizardDialog from "@/components/classification/ClassificationModelWizardDialog";
+import ClassificationModelEditDialog from "@/components/classification/ClassificationModelEditDialog";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { ImageShadowOverlay } from "@/components/overlay/ImageShadowOverlay";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import useOptimisticState from "@/hooks/use-optimistic-state";
 import { cn } from "@/lib/utils";
@@ -10,13 +11,34 @@ import {
   CustomClassificationModelConfig,
   FrigateConfig,
 } from "@/types/frigateConfig";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FaFolderPlus } from "react-icons/fa";
 import { MdModelTraining } from "react-icons/md";
+import { LuPencil, LuTrash2 } from "react-icons/lu";
+import { FiMoreVertical } from "react-icons/fi";
 import useSWR from "swr";
 import Heading from "@/components/ui/heading";
 import { useOverlayState } from "@/hooks/use-overlay-state";
+import axios from "axios";
+import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import BlurredIconButton from "@/components/button/BlurredIconButton";
 
 const allModelTypes = ["objects", "states"] as const;
 type ModelType = (typeof allModelTypes)[number];
@@ -126,26 +148,28 @@ export default function ModelSelectionView({
             onClick={() => setNewModel(true)}
           >
             <FaFolderPlus />
-            Add Classification
+            {t("button.addClassification")}
           </Button>
         </div>
       </div>
-      <div className="grid auto-rows-max grid-cols-2 gap-2 overflow-y-auto p-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 3xl:grid-cols-10">
-        {selectedClassificationConfigs.length === 0 ? (
-          <NoModelsView
-            onCreateModel={() => setNewModel(true)}
-            modelType={pageToggle}
-          />
-        ) : (
-          selectedClassificationConfigs.map((config) => (
+      {selectedClassificationConfigs.length === 0 ? (
+        <NoModelsView
+          onCreateModel={() => setNewModel(true)}
+          modelType={pageToggle}
+        />
+      ) : (
+        <div className="grid auto-rows-max grid-cols-2 gap-2 overflow-y-auto p-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 3xl:grid-cols-10">
+          {selectedClassificationConfigs.map((config) => (
             <ModelCard
               key={config.name}
               config={config}
               onClick={() => onClick(config)}
+              onUpdate={() => refreshConfig()}
+              onDelete={() => refreshConfig()}
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -179,11 +203,61 @@ function NoModelsView({
 type ModelCardProps = {
   config: CustomClassificationModelConfig;
   onClick: () => void;
+  onUpdate: () => void;
+  onDelete: () => void;
 };
-function ModelCard({ config, onClick }: ModelCardProps) {
+function ModelCard({ config, onClick, onUpdate, onDelete }: ModelCardProps) {
+  const { t } = useTranslation(["views/classificationModel"]);
+
   const { data: dataset } = useSWR<{
     [id: string]: string[];
   }>(`classification/${config.name}/dataset`, { revalidateOnFocus: false });
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+
+  const handleDelete = useCallback(async () => {
+    try {
+      await axios.delete(`classification/${config.name}`);
+      await axios.put("/config/set", {
+        requires_restart: 0,
+        update_topic: `config/classification/custom/${config.name}`,
+        config_data: {
+          classification: {
+            custom: {
+              [config.name]: "",
+            },
+          },
+        },
+      });
+
+      toast.success(t("toast.success.deletedModel", { count: 1 }), {
+        position: "top-center",
+      });
+      onDelete();
+    } catch (err) {
+      const error = err as {
+        response?: { data?: { message?: string; detail?: string } };
+      };
+      const errorMessage =
+        error.response?.data?.message ||
+        error.response?.data?.detail ||
+        "Unknown error";
+      toast.error(t("toast.error.deleteModelFailed", { errorMessage }), {
+        position: "top-center",
+      });
+    }
+  }, [config, onDelete, t]);
+
+  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleEditClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditDialogOpen(true);
+  }, []);
 
   const coverImage = useMemo(() => {
     if (!dataset) {
@@ -204,22 +278,76 @@ function ModelCard({ config, onClick }: ModelCardProps) {
   }, [dataset]);
 
   return (
-    <div
-      key={config.name}
-      className={cn(
-        "relative aspect-square w-full cursor-pointer overflow-hidden rounded-lg",
-        "outline-transparent duration-500",
-      )}
-      onClick={() => onClick()}
-    >
-      <img
-        className="size-full"
-        src={`${baseUrl}clips/${config.name}/dataset/${coverImage?.name}/${coverImage?.img}`}
+    <>
+      <ClassificationModelEditDialog
+        open={editDialogOpen}
+        model={config}
+        onClose={() => setEditDialogOpen(false)}
+        onSuccess={() => onUpdate()}
       />
-      <ImageShadowOverlay />
-      <div className="absolute bottom-2 left-3 text-lg smart-capitalize">
-        {config.name}
+
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={() => setDeleteDialogOpen(!deleteDialogOpen)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("deleteModel.title")}</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogDescription>
+            {t("deleteModel.single", { name: config.name })}
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t("button.cancel", { ns: "common" })}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className={buttonVariants({ variant: "destructive" })}
+              onClick={handleDelete}
+            >
+              {t("button.delete", { ns: "common" })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <div
+        className={cn(
+          "relative aspect-square w-full cursor-pointer overflow-hidden rounded-lg",
+        )}
+        onClick={onClick}
+      >
+        <img
+          className="size-full"
+          src={`${baseUrl}clips/${config.name}/dataset/${coverImage?.name}/${coverImage?.img}`}
+        />
+        <ImageShadowOverlay lowerClassName="h-[30%] z-0" />
+        <div className="absolute bottom-2 left-3 text-lg text-white smart-capitalize">
+          {config.name}
+        </div>
+        <div className="absolute bottom-2 right-2 z-40">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <BlurredIconButton>
+                <FiMoreVertical className="size-5 text-white" />
+              </BlurredIconButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DropdownMenuItem onClick={handleEditClick}>
+                <LuPencil className="mr-2 size-4" />
+                <span>{t("button.edit", { ns: "common" })}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleDeleteClick}>
+                <LuTrash2 className="mr-2 size-4" />
+                <span>{t("button.delete", { ns: "common" })}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

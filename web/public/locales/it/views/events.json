@@ -41,12 +41,20 @@
   "detail": {
     "noDataFound": "Nessun dato dettagliato da rivedere",
     "aria": "Attiva/disattiva la visualizzazione dettagliata",
-    "trackedObject_one": "oggetto tracciato",
-    "trackedObject_other": "oggetti tracciati",
-    "noObjectDetailData": "Non sono disponibili dati dettagliati sull'oggetto."
+    "trackedObject_one": "oggetto",
+    "trackedObject_other": "oggetti",
+    "noObjectDetailData": "Non sono disponibili dati dettagliati sull'oggetto.",
+    "label": "Dettaglio",
+    "settings": "Impostazioni di visualizzazione dettagliata",
+    "alwaysExpandActive": {
+      "title": "Espandi sempre attivo",
+      "desc": "Espandere sempre i dettagli dell'oggetto dell'elemento di revisione attivo quando disponibili."
+    }
   },
   "objectTrack": {
     "trackedPoint": "Punto tracciato",
     "clickToSeek": "Premi per cercare in questo momento"
-  }
+  },
+  "zoomIn": "Ingrandisci",
+  "zoomOut": "Rimpicciolisci"
 }

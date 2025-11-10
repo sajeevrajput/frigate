@@ -280,6 +280,7 @@ export interface CameraConfig {
       speed_threshold: number;
       objects: string[];
       color: number[];
+      friendly_name?: string;
     };
   };
 }
@@ -306,6 +307,7 @@ export type CustomClassificationModelConfig = {
   threshold: number;
   object_config?: {
     objects: string[];
+    classification_type: string;
   };
   state_config?: {
     cameras: {

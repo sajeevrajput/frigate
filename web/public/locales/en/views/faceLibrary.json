@@ -6,7 +6,8 @@
   },
   "details": {
     "timestamp": "Timestamp",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "scoreInfo": "Score is a weighted average of all face scores, weighted by the size of the face in each image."
   },
   "documentTitle": "Face Library - Frigate",
   "uploadFaceImage": {
@@ -74,7 +75,7 @@
       "deletedName_other": "{{count}} faces have been successfully deleted.",
       "renamedFace": "Successfully renamed face to {{name}}",
       "trainedFace": "Successfully trained face.",
-      "updatedFaceScore": "Successfully updated face score."
+      "updatedFaceScore": "Successfully updated face score to {{name}} ({{score}})."
     },
     "error": {
       "uploadingImageFailed": "Failed to upload image: {{errorMessage}}",

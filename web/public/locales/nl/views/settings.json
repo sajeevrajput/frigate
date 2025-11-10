@@ -50,6 +50,10 @@
       "playAlertVideos": {
         "label": "Meldingen afspelen",
         "desc": "Standaard worden recente meldingen op het Live dashboard afgespeeld als kleine lusvideo's. Schakel deze optie uit om alleen een statische afbeelding van recente meldingen weer te geven op dit apparaat/browser."
+      },
+      "displayCameraNames": {
+        "label": "Altijd cameranamen weergeven",
+        "desc": "Toon altijd de cameranamen in een label op het live-cameradashboard."
       }
     },
     "title": "Algemene instellingen",
@@ -743,7 +747,7 @@
   "triggers": {
     "documentTitle": "Triggers",
     "management": {
-      "title": "Triggerbeheer",
+      "title": "Triggers",
       "desc": "Beheer triggers voor {{camera}}. Gebruik een thumbnail om te triggeren op vergelijkbare thumbnails van het door jou gevolgde object, of gebruik een objectbeschrijving om te triggeren op vergelijkbare beschrijvingen van de door jou opgegeven tekst."
     },
     "addTrigger": "Trigger toevoegen",
@@ -764,7 +768,9 @@
     },
     "actions": {
       "alert": "Markeren als waarschuwing",
-      "notification": "Melding verzenden"
+      "notification": "Melding verzenden",
+      "sub_label": "Sublabel toevoegen",
+      "attribute": "Attribuut toevoegen"
     },
     "dialog": {
       "createTrigger": {
@@ -782,25 +788,28 @@
       "form": {
         "name": {
           "title": "Naam",
-          "placeholder": "Voer de naam van de trigger in",
+          "placeholder": "Geef deze trigger een naam",
           "error": {
-            "minLength": "De naam moet minimaal 2 tekens lang zijn.",
-            "invalidCharacters": "De naam mag alleen letters, cijfers, onderstrepingstekens en koppeltekens bevatten.",
+            "minLength": "Het veld moet minimaal 2 tekens lang zijn.",
+            "invalidCharacters": "Dit veld mag alleen letters, cijfers, onderstrepingstekens en koppeltekens bevatten.",
             "alreadyExists": "Er bestaat al een trigger met deze naam voor deze camera."
-          }
+          },
+          "description": "Voer een unieke naam of beschrijving in om deze trigger te identificeren"
         },
         "enabled": {
           "description": "Deze trigger in- of uitschakelen"
         },
         "type": {
           "title": "Type",
-          "placeholder": "Selecteer het type trigger"
+          "placeholder": "Selecteer het type trigger",
+          "description": "Activeer wanneer een vergelijkbare beschrijving van een gevolgd object wordt gedetecteerd",
+          "thumbnail": "Activeer wanneer een vergelijkbare thumbnail van een gevolgd object wordt gedetecteerd"
         },
         "content": {
           "title": "Inhoud",
-          "imagePlaceholder": "Selecteer een afbeelding",
+          "imagePlaceholder": "Selecteer een thumbnail",
           "textPlaceholder": "Tekst invoeren",
-          "imageDesc": "Selecteer een afbeelding om deze actie te activeren wanneer een vergelijkbare afbeelding wordt gedetecteerd.",
+          "imageDesc": "Alleen de meest recente 100 thumbnails worden weergegeven. Als je de gewenste thumbnail niet kunt vinden, bekijk dan eerdere objecten in Verkennen en stel daar een trigger in via het menu.",
           "textDesc": "Voer tekst in om deze actie te activeren wanneer een vergelijkbare beschrijving van een gevolgd object wordt gedetecteerd.",
           "error": {
             "required": "Inhoud is vereist."
@@ -811,11 +820,12 @@
           "error": {
             "min": "De drempelwaarde moet minimaal 0 zijn",
             "max": "De drempelwaarde mag maximaal 1 zijn"
-          }
+          },
+          "desc": "Stel de vergelijkingsdrempel in voor deze trigger. Een hogere drempel betekent dat er een nauwere overeenkomst vereist is om de trigger te activeren."
         },
         "actions": {
           "title": "Acties",
-          "desc": "Standaard verstuurt Frigate een MQTT-bericht voor alle triggers. Kies een extra actie die moet worden uitgevoerd wanneer deze trigger wordt geactiveerd.",
+          "desc": "Standaard stuurt Frigate een MQTT-bericht voor alle triggers. Sublabels voegen de triggernaam toe aan het objectlabel. Attributen zijn doorzoekbare metadata die afzonderlijk worden opgeslagen in de metadata van het gevolgde object.",
           "error": {
             "min": "Er moet ten minste één actie worden geselecteerd."
           }
@@ -842,6 +852,23 @@
     "semanticSearch": {
       "title": "Semantisch zoeken is uitgeschakeld",
       "desc": "Semantisch zoeken moet ingeschakeld zijn om triggers te kunnen gebruiken."
+    },
+    "wizard": {
+      "title": "Trigger maken",
+      "step1": {
+        "description": "Configureer de basisinstellingen voor uw trigger."
+      },
+      "step2": {
+        "description": "Stel de inhoud in die deze trigger activeert."
+      },
+      "step3": {
+        "description": "Configureer de drempelwaarde en acties voor deze trigger."
+      },
+      "steps": {
+        "nameAndType": "Naam en type",
+        "configureData": "Gegevens configureren",
+        "thresholdAndActions": "Drempel en acties"
+      }
     }
   },
   "roles": {
@@ -863,7 +890,8 @@
         "createRole": "Rol {{role}} succesvol aangemaakt",
         "updateCameras": "Camera's bijgewerkt voor rol {{role}}",
         "deleteRole": "Rol {{role}} succesvol verwijderd",
-        "userRolesUpdated": "{{count}} gebruiker(s) die aan deze rol waren toegewezen, zijn bijgewerkt naar ‘kijker’, die toegang heeft tot alle camera’s."
+        "userRolesUpdated_one": "{{count}} gebruiker(s) die aan deze rol waren toegewezen, zijn bijgewerkt naar ‘kijker’, die toegang heeft tot alle camera’s.",
+        "userRolesUpdated_other": ""
       },
       "error": {
         "createRoleFailed": "Kan rol niet aanmaken: {{errorMessage}}",
@@ -957,11 +985,16 @@
         "invalidCharacters": "Cameranaam bevat ongeldige tekens",
         "nameExists": "Cameranaam bestaat al",
         "brands": {
-          "reolink-rtsp": "Reolink RTSP wordt niet aanbevolen. Het is raadzaam om http in te schakelen in de camera-instellingen en de camerawizard opnieuw te starten."
-        }
+          "reolink-rtsp": "Reolink RTSP wordt niet aanbevolen. Schakel HTTP in via de firmware-instellingen van de camera en start de wizard opnieuw."
+        },
+        "customUrlRtspRequired": "Aangepaste URL’s moeten beginnen met “rtsp://”. Handmatige configuratie is vereist voor camera­streams die geen RTSP gebruiken."
       },
       "docs": {
         "reolink": "https://docs.frigate.video/configuration/camera_specific.html#reolink-cameras"
+      },
+      "testing": {
+        "probingMetadata": "Camerametadata wordt onderzocht...",
+        "fetchingSnapshot": "Camerasnapshot ophalen..."
       }
     },
     "step2": {
@@ -1040,8 +1073,12 @@
         },
         "hikvision": {
           "substreamWarning": "Substream 1 is beperkt tot een lage resolutie. Veel Hikvision-camera’s ondersteunen extra substreams die in de instellingen van de camera ingeschakeld moeten worden. Het wordt aanbevolen deze streams te controleren en te gebruiken indien beschikbaar."
-        }
-      }
+        },
+        "resolutionHigh": "Een resolutie van {{resolution}} kan leiden tot een verhoogd gebruik van systeembronnen.",
+        "resolutionLow": "Een resolutie van {{resolution}} kan te laag zijn voor betrouwbare detectie van kleine objecten."
+      },
+      "ffmpegModule": "Gebruik stream-compatibiliteitsmodus",
+      "ffmpegModuleDescription": "Als de stream na meerdere pogingen niet wordt geladen, probeer dit dan in te schakelen. Wanneer deze optie is ingeschakeld, gebruikt Frigate de ffmpeg-module samen met go2rtc. Dit kan zorgen voor een betere compatibiliteit met sommige camerastreams."
     }
   },
   "cameraManagement": {

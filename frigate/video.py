@@ -35,7 +35,7 @@ from frigate.ptz.autotrack import ptz_moving_at_frame_time
 from frigate.track import ObjectTracker
 from frigate.track.norfair_tracker import NorfairTracker
 from frigate.track.tracked_object import TrackedObjectAttribute
-from frigate.util.builtin import EventsPerSecond, get_tomorrow_at_time
+from frigate.util.builtin import EventsPerSecond
 from frigate.util.image import (
     FrameManager,
     SharedMemoryFrameManager,
@@ -54,6 +54,7 @@ from frigate.util.object import (
     reduce_detections,
 )
 from frigate.util.process import FrigateProcess
+from frigate.util.time import get_tomorrow_at_time
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,9 @@ class CameraWatchdog(threading.Thread):
         self.sleeptime = self.config.ffmpeg.retry_interval
 
         self.config_subscriber = CameraConfigUpdateSubscriber(
-            None, {config.name: config}, [CameraConfigUpdateEnum.enabled]
+            None,
+            {config.name: config},
+            [CameraConfigUpdateEnum.enabled, CameraConfigUpdateEnum.record],
         )
         self.requestor = InterProcessRequestor()
         self.was_enabled = self.config.enabled

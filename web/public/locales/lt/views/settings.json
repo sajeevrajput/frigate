@@ -234,7 +234,7 @@
       "name": {
         "title": "Pavadinimas",
         "inputPlaceHolder": "Įveskite pavadinimą …",
-        "tips": "Pavadinimas privalo būti bent 2 simboliai ir negali būti toks pat kaip kita kamera ar zona."
+        "tips": "Pavadinimas privalo būti bent 2 simboliai, privalo turėti bent vieną raidę ir negali būti toks pat kaip kita kamera ar zona."
       },
       "inertia": {
         "title": "Inercija",
@@ -782,7 +782,9 @@
     "toast": {
       "success": {
         "deleteRole": "Rolė {{role}} sėkmingai pašalinta",
-        "userRolesUpdated": "{{count}} šios rolės vartotojai buvo priskirti rolei 'žiūrovas', kuri turi prieigą prie visų kamerų.",
+        "userRolesUpdated_one": "{{count}} šios rolės vartotojai buvo priskirti rolei 'žiūrovas', kuri turi prieigą prie visų kamerų.",
+        "userRolesUpdated_few": "",
+        "userRolesUpdated_other": "",
         "createRole": "Rolė {{role}} sėkmingai sukurta",
         "updateCameras": "Atnaujintos kameros rolei {{role}}"
       },
@@ -852,7 +854,7 @@
       "testFailed": "Transliacijos testas nepavyko: {{error}}"
     },
     "step1": {
-      "description": "Įveskite savo kameros informaciją ir testuokite prisijungimą",
+      "description": "Įveskite savo kameros informaciją ir testuokite prisijungimą.",
       "cameraName": "Kameros Pavadinimas",
       "cameraNamePlaceholder": "pvz., priekines_durys arba Galinio Kiemo Vaizdas",
       "host": "Host/IP Adresas",
