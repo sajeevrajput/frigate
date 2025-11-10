@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections import deque
+from collections import deque, defaultdict
 from multiprocessing import Queue, Value
 from multiprocessing.synchronize import Event as MpEvent
 
@@ -426,8 +426,10 @@ class UntrackedSharedMemoryPool:
         raise NotImplementedError("Setting region shm is not supported.")
     
     def cleanup_all(self):
-        for shm in self.shm_pool.values():
-            shm.unlink()
+        for reg_shm in self.shm_pool.values():
+            reg_shm.detector_subscriber.stop()            
+            reg_shm.inp_shm.unlink()
+            reg_shm.out_shm.unlink()
 
 
 class RemoteObjectDetector:
@@ -447,7 +449,6 @@ class RemoteObjectDetector:
         self.stop_event = stop_event
         self.shm_pool_size = shm_pool_size
         self.shm_pool = UntrackedSharedMemoryPool(name=self.name, input_array_shape=(model_config.height, model_config.width), pool_size=shm_pool_size) # Pool of SHM regions
-        self.detector_subscriber = ObjectDetectorSubscriber(name)
 
     def detect(self, tensor_inputs, threshold=0.4):
         detections = []
@@ -465,65 +466,57 @@ class RemoteObjectDetector:
             except zmq.Again:
                 break
 
-        # copy input to shared memory
-        # self.np_shm[:] = tensor_input[:]
-        # self.detection_queue.put((self.name, frame_name))
-        # result = self.detector_subscriber.check_for_update()    # this is a blocker call, can do for all regions
-
-        # # if it timed out
-        # if result is None:
-        #     return detections
-
-        # for d in self.out_np_shm:
-        #     if d[1] < threshold:
-        #         break
-        #     detections.append(
-        #         (self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5]))
-        #     )
-        # self.fps.update()
-        
-        # better to keep pool size bigger than batchsize to avoid waiting for shm region to be free
-        logger.warning(f"RemoteObjectDetector: Processing {len(tensor_inputs)} inputs with SHM pool size {self.shm_pool_size}")
+        logger.warning(f"RemoteObjectDetector: {self.name} Processing {len(tensor_inputs)} inputs with SHM pool size {self.shm_pool_size}")
+        region_detections_map = defaultdict(list)
         for i in range(0,len(tensor_inputs),self.shm_pool_size):
             names = []
             # refresh every region shm with new input
+            pool_region_map = {}
             for j in range(self.shm_pool_size):
                 region_shm = self.shm_pool[f"{self.name}-{j}"]
                 index = i + j
                 if index < len(tensor_inputs):
-                    logger.warning(f"RemoteObjectDetector: Sending input to region shm {region_shm.inp_shm_name} for input index {index}")
+                    # copy input to shared memory
                     region_shm.inp_shm_np[:] = tensor_inputs[index][:]
                     names.append(region_shm.inp_shm_name)
 
                     self.detection_queue.put(region_shm.inp_shm_name)
+                    pool_region_map[region_shm.inp_shm_name] = index
             
             # monitor for outputs for each region, post proc immediately if one's available.
             pending_regions = names.copy()
             start_time = time.time()
             TIMEOUT = 5.0  # seconds timeout for all regions in the pool to be processed
+            
             while pending_regions and time.time() - start_time < TIMEOUT:
                 for r in list(pending_regions):
                     region_shm = self.shm_pool[r]
                     result = region_shm.detector_subscriber.check_for_update(timeout=0.001)
                     if result is not None:
-                        logger.warning(f"Got detection for region {r}: {region_shm.out_shm_np.shape}")
+                        region_detection=[]
                         for d in region_shm.out_shm_np:
-                            logger.warning(f"Region {r} detection: {d.shape}")
                             if d[1] < threshold:
                                 break
-                            detections.append(
-                                (self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5]))
-                            )
+                            region_detection.append((self.labels[int(d[0])], float(d[1]), (d[2], d[3], d[4], d[5])))
+                            # assign detections to correct region
+                        region_detections_map[pool_region_map[region_shm.inp_shm_name]] = region_detection
                         self.fps.update()
                         pending_regions.remove(r)
             # end of while pending_regions
             if pending_regions:
-                self.logger.warning(f"Timeout waiting for regions: {pending_regions}")
+                self.logger.warning(f"{self.name}: Timeout waiting for regions: {pending_regions}")
+        
+        logger.debug(f"{self.name}: Region detections keys: {region_detections_map.keys()}")
+        logger.debug(f"{self.name}: Region detections : {region_detections_map}")
 
+        # return detections in order of arrived input tensor list
+        for index in sorted(region_detections_map.keys()):
+            detections.append(region_detections_map[index])
+        logger.debug(f"{self.name}: Total detections returned: {detections}")
         return detections
 
     def cleanup(self):
-        self.detector_subscriber.stop()
+        # self.detector_subscriber.stop()
         self.shm.unlink()
         self.out_shm.unlink()
         self.shm_pool.cleanup_all()

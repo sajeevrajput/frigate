@@ -1,8 +1,5 @@
 import logging
-import os
-import threading
-import queue
-from datetime import datetime
+
 import numpy as np
 import openvino as ov
 import openvino.properties.hint as hints
@@ -166,21 +163,24 @@ class OvDetector(DetectionApi):
         if self.ov_model_type == ModelTypeEnum.rfdetr:
             return post_process_rfdetr(outputs)
         elif self.ov_model_type == ModelTypeEnum.ssd:
+            no_detections = outputs[0][0][0].shape[0]
+            stride = no_detections // N
+            for i in range(N):
+                results = outputs[0][0][0][i * stride:(i + 1) * stride]
+                for j, (_, class_id, score, xmin, ymin, xmax, ymax) in enumerate(
+                    results
+                ):
+                    if j == 20:
+                        break
+                    detections[i][j] = [
+                        class_id,
+                        float(score),
+                        ymin,
+                        xmin,
+                        ymax,
+                        xmax,
+                    ]
             return detections
-            # results = outputs[0][0][0]
-
-            # for i, (_, class_id, score, xmin, ymin, xmax, ymax) in enumerate(results):
-            #     if i == 20:
-            #         break
-            #     detections[i] = [
-            #         class_id,
-            #         float(score),
-            #         ymin,
-            #         xmin,
-            #         ymax,
-            #         xmax,
-            #     ]
-            # return detections
         elif self.ov_model_type == ModelTypeEnum.yolonas:
             predictions = outputs[0]
 

@@ -659,10 +659,9 @@ def detect(
 
     input_tensors = [create_tensor_input(frame, model_config, region) for region in regions]
 
-    all_regions_detections = object_detector.detect(input_tensors)
     detections = []
-    logger.warning(f"Regions detections: {all_regions_detections}")
-    for region_detections in all_regions_detections:
+    all_regions_detections = object_detector.detect(input_tensors)
+    for region, region_detections in zip(regions, all_regions_detections):
         for d in region_detections:
             box = d[2]
             size = region[2] - region[0]
@@ -899,8 +898,8 @@ def process_frames(
                         for candidate in motion_clusters
                     ]
                     regions += motion_regions
-            # regions = [(475, 360, 1171, 1056)]  # hardcoded to test fixed region
-            regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056)]
+            # regions = [(475, 360, 1171, 1056)]  # hardcoded fixed regions for benchmarking
+            regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056), (475, 360, 1171, 1056)]
 
             # if starting up, get the next startup scan region
             if startup_scan:
@@ -925,7 +924,6 @@ def process_frames(
                 if obj["id"] in stationary_object_ids
             ]
 
-            # for region in regions:
             detections.extend(
                 detect(
                     camera_config.detect,
