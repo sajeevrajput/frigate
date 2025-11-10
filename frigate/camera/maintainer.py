@@ -118,7 +118,7 @@ class CameraMaintainer(threading.Thread):
                         for det in self.config.detectors.values()
                     ]
                 )
-                UntrackedSharedMemory(name=f"out-{name}", create=True, size=20 * 6 * 4)
+                UntrackedSharedMemory(name=f"out-{name}", create=True, size=20 * 6 * 4 * self.MAX_BATCHSIZE)
                 UntrackedSharedMemory(
                     name=name,
                     create=True,

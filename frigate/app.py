@@ -338,7 +338,7 @@ class FrigateApp:
         )
 
     def start_detectors(self) -> None:
-        self.MAX_BATCHSIZE = 8
+        self.MAX_BATCHSIZE = 8  # to accomodate for input tensor
         for name in self.config.cameras.keys():
             try:
                 largest_frame = max(
