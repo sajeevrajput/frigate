@@ -17,7 +17,6 @@ from frigate.util.model import (
     post_process_rfdetr,
     post_process_yolo,
 )
-from frigate.object_detection.util import RequestStore, ResponseStore
 import time
 
 logger = logging.getLogger(__name__)
@@ -52,8 +51,6 @@ class OvDetector(DetectionApi):
             model_path=detector_config.model.path,
             device=detector_config.device,
             model_type=detector_config.model.model_type,
-            # async_mode=True,
-            async_callback=self.callback
         )
         logger.info("Performance Hint: %s", self.runner.compiled_model.get_property("PERFORMANCE_HINT"))
 
@@ -72,9 +69,6 @@ class OvDetector(DetectionApi):
             self.model_invalid = True
 
         if self.ov_model_type == ModelTypeEnum.ssd:
-            # partial_input_shape = self.runner.compiled_model.inputs[0].get_partial_shape()
-            # if partial_input_shape.is_dynamic:
-            
             model_inputs = self.runner.compiled_model.inputs
             model_outputs = self.runner.compiled_model.outputs
 
@@ -146,10 +140,6 @@ class OvDetector(DetectionApi):
 
     def detect_raw(self, tensor_input):
         N = tensor_input.shape[0]
-        if self.runner.is_async:
-            # inference is done by async_runner thread with post processing handled in callback
-            return
-        
         if self.model_invalid:
             return np.zeros((N, 20, 6), np.float32)
 
@@ -239,125 +229,3 @@ class OvDetector(DetectionApi):
                     object_detected[6], object_detected[5], object_detected[:4]
                 )
             return detections
-
-    def send_input(self, connection_id, tensor_input, frame_name, sent_time):
-        # TODO Invalid model ???
-        if self.ov_model_type == ModelTypeEnum.dfine:
-            # Use named inputs for dfine models
-            inputs = {
-                "images": tensor_input,
-                "orig_target_sizes": np.array([[self.h, self.w]], dtype=np.int64),
-            }
-        else:
-            inputs = {self.runner.get_input_names()[0]: tensor_input}
-        # logger.warning(f"Submitting request {connection_id} to inference queue. type of connection_id is {type(connection_id)}")
-        # request_id = self.input_store.put(input_tensor) #TODO do I need to worry about order since connection_id is enough
-        # self.runner.input_store.put((inputs, connection_id, frame_name, sent_time))
-        logger.warning(f"images size: {tensor_input.shape}")
-        self.runner._async_runner((inputs, connection_id, frame_name, sent_time))
-        
-        # self.request_ids.put((request_id, connection_id))
-        # return request_id
-    
-    def receive_output(self, timeout=5):
-        try:
-            # request_id, connection_id = self.request_ids.get()
-            connection_id, output_tensor, frame_name, inf_time,sent_time = self.runner.response_store.get(True, timeout=timeout)
-            return connection_id, output_tensor, frame_name, inf_time,sent_time
-        except TimeoutError:
-            logger.error(f"Timeout waiting for inference result for request {request_id}")
-            return None, np.zeros((20, 6), np.float32), None, None,None
-
-    def callback(self, infer_request, userdata):
-        connection_id, frame_name, start_time, sent_time = userdata
-        detections = np.zeros((20, 6), np.float32)
-        
-        # if self.model_invalid:
-        #     return detections
-        
-        # adding for yologeneric only atm
-        # output_tensor = infer_request.get_output_tensor(0).data
-        output = infer_request.get_output_tensor(0)
-        output_tensor = output.data
-        logger.warning(f"Output tensor shape: {output_tensor.shape}")
-
-        # post process
-        if self.ov_model_type == ModelTypeEnum.yologeneric:
-            # out_tensor = []
-
-            # for item in output_tensor:
-            #     out_tensor.append(item.data)
-            # processed_output = post_process_yolo(out_tensor, self.w, self.h)
-            processed_output = detections
-            
-        elif self.ov_model_type == ModelTypeEnum.rfdetr:
-            processed_output =  post_process_rfdetr(
-                [
-                    infer_request.get_output_tensor(0).data,
-                    infer_request.get_output_tensor(1).data,
-                ]
-            )
-        elif self.ov_model_type == ModelTypeEnum.ssd:
-            results = infer_request.get_output_tensor(0).data[0][0]
-
-            for i, (_, class_id, score, xmin, ymin, xmax, ymax) in enumerate(results):
-                if i == 20:
-                    break
-                detections[i] = [
-                    class_id,
-                    float(score),
-                    ymin,
-                    xmin,
-                    ymax,
-                    xmax,
-                ]
-            processed_output = detections
-        elif self.ov_model_type == ModelTypeEnum.yolonas:
-            predictions = infer_request.get_output_tensor(0).data
-
-            for i, prediction in enumerate(predictions):
-                if i == 20:
-                    break
-                (_, x_min, y_min, x_max, y_max, confidence, class_id) = prediction
-                # when running in GPU mode, empty predictions in the output have class_id of -1
-                if class_id < 0:
-                    break
-                detections[i] = [
-                    class_id,
-                    confidence,
-                    y_min / self.h,
-                    x_min / self.w,
-                    y_max / self.h,
-                    x_max / self.w,
-                ]
-            processed_output = detections
-            
-        elif self.ov_model_type == ModelTypeEnum.yolox:
-            out_tensor = infer_request.get_output_tensor()
-            # [x, y, h, w, box_score, class_no_1, ..., class_no_80],
-            results = out_tensor.data
-            results[..., :2] = (results[..., :2] + self.grids) * self.expanded_strides
-            results[..., 2:4] = np.exp(results[..., 2:4]) * self.expanded_strides
-            image_pred = results[0, ...]
-
-            class_conf = np.max(
-                image_pred[:, 5 : 5 + self.num_classes], axis=1, keepdims=True
-            )
-            class_pred = np.argmax(image_pred[:, 5 : 5 + self.num_classes], axis=1)
-            class_pred = np.expand_dims(class_pred, axis=1)
-
-            conf_mask = (image_pred[:, 4] * class_conf.squeeze() >= 0.3).squeeze()
-            # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred)
-            detections = np.concatenate(
-                (image_pred[:, :5], class_conf, class_pred), axis=1
-            )
-            detections = detections[conf_mask]
-
-            ordered = detections[detections[:, 5].argsort()[::-1]][:20]
-
-            for i, object_detected in enumerate(ordered):
-                detections[i] = self.process_yolo(
-                    object_detected[6], object_detected[5], object_detected[:4]
-                )
-            processed_output = detections
-        self.runner.response_store.put((connection_id, processed_output, frame_name, datetime.now().timestamp() - start_time, sent_time))

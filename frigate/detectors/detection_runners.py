@@ -268,13 +268,6 @@ class OpenVINOModelRunner(BaseModelRunner):
             device = "GPU"
 
         self.complex_model = OpenVINOModelRunner.is_complex_model(model_type)
-        
-        # get async params
-        self.is_async = kwargs.get("async_mode", False)
-        self.async_callback = kwargs.get("async_callback", None)
-        if self.is_async and self.async_callback is None:
-            raise ValueError("Async callback must be provided for async inference")
-
         if not os.path.isfile(model_path):
             raise FileNotFoundError(f"OpenVINO model file {model_path} not found.")
 
@@ -300,15 +293,7 @@ class OpenVINOModelRunner(BaseModelRunner):
         )
 
         # Create reusable inference request
-        if self.is_async:
-            self.infer_request = ov.AsyncInferQueue(self.compiled_model)    # auto create pool of async infer requests
-            self.infer_request.set_callback(self.async_callback)
-
-            self.input_store = mp.Queue()
-            self.response_store = mp.Queue()
-
-        else:
-            self.infer_request = self.compiled_model.create_infer_request()
+        self.infer_request = self.compiled_model.create_infer_request()
         self.input_tensor: ov.Tensor | None = None
 
         # Thread lock to prevent concurrent inference (needed for JinaV2 which shares
@@ -348,13 +333,6 @@ class OpenVINOModelRunner(BaseModelRunner):
                 return input_shape[3] if len(input_shape) >= 4 else -1
             except Exception:
                 return -1
-
-    def _async_runner(self,data) -> None:
-            input_data_dict, connection_id, frame_name, sent_time = data
-            # connection_id is unique to a camera. all subsequent frames from a camera will have the same connection_id.
-            # this also means you cannot send multiple frames from the same camera at the same time, as the connection_id will be overwritten in the response_store
-            # But as of now, the RemoteObjectDetector only sends one frame at a time per camera, so this is not an issue.
-            self.infer_request.start_async(input_data_dict, userdata=(connection_id, frame_name, datetime.now().timestamp(), sent_time))
 
     def run(self, inputs: dict[str, Any]) -> list[np.ndarray]:
         """Run inference with the model.
@@ -414,7 +392,6 @@ class OpenVINOModelRunner(BaseModelRunner):
                         )
                         input_data = input_data.astype(expected_dtype)
 
-            # Run inference
                     input_tensor = ov.Tensor(input_element_type, input_data.shape)
                     np.copyto(input_tensor.data, input_data)
 

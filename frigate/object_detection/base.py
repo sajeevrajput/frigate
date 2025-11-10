@@ -241,14 +241,14 @@ class AsyncDetectorRunner(FrigateProcess):
         logger.info("Starting Detect Worker Thread")
         while not self.stop_event.is_set():
             try:
-                connection_id, frame_name = self.detection_queue.get(timeout=1)
+                connection_id = self.detection_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
             input_frame = self._frame_manager.get(
                 connection_id,
                 (
-                    4,
+                    1,
                     self.detector_config.model.height,
                     self.detector_config.model.width,
                     3,
@@ -260,22 +260,19 @@ class AsyncDetectorRunner(FrigateProcess):
                 continue
 
             # mark start time and send to accelerator
-            self.send_times.append((time.perf_counter(), frame_name))
-            self._detector.async_send_input(input_frame, connection_id, frame_name, datetime.datetime.now().timestamp())
+            self.send_times.append(time.perf_counter())
+            self._detector.async_send_input(input_frame, connection_id)
 
     def _result_worker(self) -> None:
         logger.info("Starting Result Worker Thread")
         while not self.stop_event.is_set():
-            connection_id, detections, frame_name, inf_time, sent_time = self._detector.async_receive_output()
+            connection_id, detections = self._detector.async_receive_output()
 
             if not self.send_times:
                 # guard; shouldn't happen if send/recv are balanced
                 continue
-            ts, poped_frame_name = self.send_times.popleft()
+            ts = self.send_times.popleft()
             duration = time.perf_counter() - ts
-            logger.info(
-                f"[{datetime.datetime.now().timestamp():.4f}]: Inference took {duration:.3f}s for {connection_id} sent frame: {frame_name}, inf time: {inf_time:.3f}s. popped frame: {poped_frame_name}, sent time: {sent_time:.3f}s, sent time delta: {datetime.datetime.now().timestamp() - sent_time:.3f}s"
-            )
 
             # release input buffer
             self._frame_manager.close(connection_id)
@@ -355,8 +352,6 @@ class ObjectDetectProcess:
 
         # Async path for MemryX
         if self.detector_config.type == "memryx":
-        # if self.detector_config.type == "memryx" or self.detector_config.type == "openvino":
-            logger.info("Starting ASYNC detection process...")
             self.detect_process = AsyncDetectorRunner(
                 f"frigate.detector:{self.name}",
                 self.detection_queue,
@@ -368,7 +363,6 @@ class ObjectDetectProcess:
                 self.stop_event,
             )
         else:
-            logger.info("Starting Non ASYNC detection process...")
             self.detect_process = DetectorRunner(
                 f"frigate.detector:{self.name}",
                 self.detection_queue,
@@ -453,14 +447,6 @@ class RemoteObjectDetector:
         self.stop_event = stop_event
         self.shm_pool_size = shm_pool_size
         self.shm_pool = UntrackedSharedMemoryPool(name=self.name, input_array_shape=(model_config.height, model_config.width), pool_size=shm_pool_size) # Pool of SHM regions
-        # self.shm = UntrackedSharedMemory(name=self.name, create=False)
-        # self.np_shm = np.ndarray(
-        #     (1, model_config.height, model_config.width, 3),
-        #     dtype=np.uint8,
-        #     buffer=self.shm.buf,
-        # )
-        # self.out_shm = UntrackedSharedMemory(name=f"out-{self.name}", create=False)
-        # self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         self.detector_subscriber = ObjectDetectorSubscriber(name)
 
     def detect(self, tensor_inputs, threshold=0.4):
