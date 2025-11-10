@@ -461,7 +461,7 @@ class RemoteObjectDetector:
         # )
         # self.out_shm = UntrackedSharedMemory(name=f"out-{self.name}", create=False)
         # self.out_np_shm = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
-        # self.detector_subscriber = ObjectDetectorSubscriber(name)
+        self.detector_subscriber = ObjectDetectorSubscriber(name)
 
     def detect(self, tensor_inputs, threshold=0.4):
         detections = []
@@ -474,7 +474,8 @@ class RemoteObjectDetector:
         # NOTE: This should never happen, but can in some rare cases
         while True:
             try:
-                self.detector_subscriber.socket.recv_string(flags=zmq.NOBLOCK)
+                for i in range(self.shm_pool_size):
+                    self.shm_pool[f"{self.name}-{i}"].detector_subscriber.socket.recv_string(flags=zmq.NOBLOCK)
             except zmq.Again:
                 break
 
