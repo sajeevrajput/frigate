@@ -139,9 +139,6 @@ class DetectorRunner(FrigateProcess):
         object_detector = LocalObjectDetector(detector_config=self.detector_config)
         detector_publisher = ObjectDetectorPublisher()
 
-        # for name in self.cameras:
-        #     self.create_output_shm(name)
-
         while not self.stop_event.is_set():
             detection_queue_size = self.detection_queue.qsize()
             # self.logger.info(f"[{datetime.datetime.now().timestamp()}]: detection_queue size: {self.detection_queue.qsize()}")
@@ -149,14 +146,14 @@ class DetectorRunner(FrigateProcess):
 
             input_frames = []
             connection_ids = []
-            # pull no of items == BATCH_SIZE from queue
 
+            # pull items from queue of max size equal to BATCH_SIZE
             for i in range(min(detection_queue_size, self.BATCH_SIZE)):
                 try:
                     connection_id = self.detection_queue.get(timeout=1)
                 except queue.Empty:
                     continue
-                self.create_output_shm(connection_id)
+                self.create_output_shm(connection_id)   # this assumes, all connection ids to be batched are unique
                 input_frame = frame_manager.get(
                     connection_id,
                     (
@@ -401,7 +398,7 @@ class RegionSHM:
         self.out_shm_np = np.ndarray((20, 6), dtype=np.float32, buffer=self.out_shm.buf)
         
         # create subscriber
-        self.detector_subscriber = ObjectDetectorSubscriber(self.inp_shm_name)  # e.g. 'camera1-0'
+        self.detector_subscriber = ObjectDetectorSubscriber(self.inp_shm_name)
 
 class UntrackedSharedMemoryPool:
     """Create a pool of shared memory regions for object detection inputs and outputs.
@@ -414,7 +411,7 @@ class UntrackedSharedMemoryPool:
         self.pool_size = pool_size
         self.shm_pool: dict[int, RegionSHM] = {}  # dict of inp output shm name pair for each region
         for i in range(pool_size):
-            shm_name = f"{self.name}-{i}"
+            shm_name = f"{self.name}-{i}"  # e.g. 'camera1-0'
             self.shm_pool[shm_name] = RegionSHM(name=shm_name, input_array_shape=input_array_shape)
 
     def __getitem__(self, index: int) -> RegionSHM:
@@ -467,11 +464,15 @@ class RemoteObjectDetector:
                 break
 
         logger.warning(f"RemoteObjectDetector: {self.name} Processing {len(tensor_inputs)} inputs with SHM pool size {self.shm_pool_size}")
+        # map output detections to their corresponding input regions
         region_detections_map = defaultdict(list)
+        
+        # break inputs into chunks of shm_pool_size
         for i in range(0,len(tensor_inputs),self.shm_pool_size):
             names = []
-            # refresh every region shm with new input
+            # track current region shm names in chunk to original input index
             pool_region_map = {}
+            # process shm_pool_size inputs at a time
             for j in range(self.shm_pool_size):
                 region_shm = self.shm_pool[f"{self.name}-{j}"]
                 index = i + j
@@ -488,7 +489,7 @@ class RemoteObjectDetector:
             start_time = time.time()
             TIMEOUT = 5.0  # seconds timeout for all regions in the pool to be processed
             
-            while pending_regions and time.time() - start_time < TIMEOUT:
+            while pending_regions and (time.time() - start_time) < TIMEOUT:
                 for r in list(pending_regions):
                     region_shm = self.shm_pool[r]
                     result = region_shm.detector_subscriber.check_for_update(timeout=0.001)
@@ -516,7 +517,4 @@ class RemoteObjectDetector:
         return detections
 
     def cleanup(self):
-        # self.detector_subscriber.stop()
-        self.shm.unlink()
-        self.out_shm.unlink()
         self.shm_pool.cleanup_all()

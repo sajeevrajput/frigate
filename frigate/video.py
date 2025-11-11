@@ -656,7 +656,6 @@ def detect(
     objects_to_track,
     object_filters,
 ):
-
     input_tensors = [create_tensor_input(frame, model_config, region) for region in regions]
 
     detections = []

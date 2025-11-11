@@ -266,6 +266,7 @@ class OpenVINOModelRunner(BaseModelRunner):
             device = "GPU"
 
         self.complex_model = OpenVINOModelRunner.is_complex_model(model_type)
+
         if not os.path.isfile(model_path):
             raise FileNotFoundError(f"OpenVINO model file {model_path} not found.")
 
