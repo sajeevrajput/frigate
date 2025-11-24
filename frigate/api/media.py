@@ -762,6 +762,15 @@ async def recording_clip(
         .order_by(Recordings.start_time.asc())
     )
 
+    if recordings.count() == 0:
+        return JSONResponse(
+            content={
+                "success": False,
+                "message": "No recordings found for the specified time range",
+            },
+            status_code=400,
+        )
+
     file_name = sanitize_filename(f"playlist_{camera_name}_{start_ts}-{end_ts}.txt")
     file_path = os.path.join(CACHE_DIR, file_name)
     with open(file_path, "w") as file:
@@ -840,6 +849,7 @@ async def vod_ts(camera_name: str, start_ts: float, end_ts: float):
 
     clips = []
     durations = []
+    min_duration_ms = 100  # Minimum 100ms to ensure at least one video frame
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
 
     recording: Recordings
@@ -857,11 +867,11 @@ async def vod_ts(camera_name: str, start_ts: float, end_ts: float):
         if recording.end_time > end_ts:
             duration -= int((recording.end_time - end_ts) * 1000)
 
-        if duration <= 0:
-            # skip if the clip has no valid duration
+        if duration < min_duration_ms:
+            # skip if the clip has no valid duration (too short to contain frames)
             continue
 
-        if 0 < duration < max_duration_ms:
+        if min_duration_ms <= duration < max_duration_ms:
             clip["keyFrameDurations"] = [duration]
             clips.append(clip)
             durations.append(duration)

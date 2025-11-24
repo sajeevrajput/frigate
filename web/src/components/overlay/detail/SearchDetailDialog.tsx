@@ -683,6 +683,22 @@ function ObjectDetailsTab({
 
   const mutate = useGlobalMutation();
 
+  // Helper to map over SWR cached search results while preserving
+  // either paginated format (SearchResult[][]) or flat format (SearchResult[])
+  const mapSearchResults = useCallback(
+    (
+      currentData: SearchResult[][] | SearchResult[] | undefined,
+      fn: (event: SearchResult) => SearchResult,
+    ) => {
+      if (!currentData) return currentData;
+      if (Array.isArray(currentData[0])) {
+        return (currentData as SearchResult[][]).map((page) => page.map(fn));
+      }
+      return (currentData as SearchResult[]).map(fn);
+    },
+    [],
+  );
+
   // users
 
   const isAdmin = useIsAdmin();
@@ -791,6 +807,15 @@ function ObjectDetailsTab({
     }
   }, [search]);
 
+  const isEventsKey = useCallback((key: unknown): boolean => {
+    const candidate = Array.isArray(key) ? key[0] : key;
+    const EVENTS_KEY_PATTERNS = ["events", "events/search", "events/explore"];
+    return (
+      typeof candidate === "string" &&
+      EVENTS_KEY_PATTERNS.some((p) => candidate.includes(p))
+    );
+  }, []);
+
   const updateDescription = useCallback(() => {
     if (!search) {
       return;
@@ -805,28 +830,20 @@ function ObjectDetailsTab({
           });
         }
         mutate(
-          (key) =>
-            typeof key === "string" &&
-            (key.includes("events") ||
-              key.includes("events/search") ||
-              key.includes("events/explore")),
-          (currentData: SearchResult[][] | SearchResult[] | undefined) => {
-            if (!currentData) return currentData;
-            // optimistic update
-            return currentData
-              .flat()
-              .map((event) =>
-                event.id === search.id
-                  ? { ...event, data: { ...event.data, description: desc } }
-                  : event,
-              );
-          },
+          (key) => isEventsKey(key),
+          (currentData: SearchResult[][] | SearchResult[] | undefined) =>
+            mapSearchResults(currentData, (event) =>
+              event.id === search.id
+                ? { ...event, data: { ...event.data, description: desc } }
+                : event,
+            ),
           {
             optimisticData: true,
             rollbackOnError: true,
             revalidate: false,
           },
         );
+        setSearch({ ...search, data: { ...search.data, description: desc } });
       })
       .catch((error) => {
         const errorMessage =
@@ -843,7 +860,7 @@ function ObjectDetailsTab({
         );
         setDesc(search.data.description);
       });
-  }, [desc, search, mutate, t]);
+  }, [desc, search, mutate, t, mapSearchResults, isEventsKey, setSearch]);
 
   const regenerateDescription = useCallback(
     (source: "snapshot" | "thumbnails") => {
@@ -910,14 +927,9 @@ function ObjectDetailsTab({
             });
 
             mutate(
-              (key) =>
-                typeof key === "string" &&
-                (key.includes("events") ||
-                  key.includes("events/search") ||
-                  key.includes("events/explore")),
-              (currentData: SearchResult[][] | SearchResult[] | undefined) => {
-                if (!currentData) return currentData;
-                return currentData.flat().map((event) =>
+              (key) => isEventsKey(key),
+              (currentData: SearchResult[][] | SearchResult[] | undefined) =>
+                mapSearchResults(currentData, (event) =>
                   event.id === search.id
                     ? {
                         ...event,
@@ -928,8 +940,7 @@ function ObjectDetailsTab({
                         },
                       }
                     : event,
-                );
-              },
+                ),
               {
                 optimisticData: true,
                 rollbackOnError: true,
@@ -963,7 +974,7 @@ function ObjectDetailsTab({
           );
         });
     },
-    [search, apiHost, mutate, setSearch, t],
+    [search, apiHost, mutate, setSearch, t, mapSearchResults, isEventsKey],
   );
 
   // recognized plate
@@ -987,14 +998,9 @@ function ObjectDetailsTab({
             });
 
             mutate(
-              (key) =>
-                typeof key === "string" &&
-                (key.includes("events") ||
-                  key.includes("events/search") ||
-                  key.includes("events/explore")),
-              (currentData: SearchResult[][] | SearchResult[] | undefined) => {
-                if (!currentData) return currentData;
-                return currentData.flat().map((event) =>
+              (key) => isEventsKey(key),
+              (currentData: SearchResult[][] | SearchResult[] | undefined) =>
+                mapSearchResults(currentData, (event) =>
                   event.id === search.id
                     ? {
                         ...event,
@@ -1005,8 +1011,7 @@ function ObjectDetailsTab({
                         },
                       }
                     : event,
-                );
-              },
+                ),
               {
                 optimisticData: true,
                 rollbackOnError: true,
@@ -1040,7 +1045,7 @@ function ObjectDetailsTab({
           );
         });
     },
-    [search, apiHost, mutate, setSearch, t],
+    [search, apiHost, mutate, setSearch, t, mapSearchResults, isEventsKey],
   );
 
   // speech transcription
@@ -1096,23 +1101,15 @@ function ObjectDetailsTab({
           });
 
       setState("submitted");
+      setSearch({ ...search, plus_id: "new_upload" });
       mutate(
-        (key) =>
-          typeof key === "string" &&
-          (key.includes("events") ||
-            key.includes("events/search") ||
-            key.includes("events/explore")),
-        (currentData: SearchResult[][] | SearchResult[] | undefined) => {
-          if (!currentData) return currentData;
-          // optimistic update
-          return currentData
-            .flat()
-            .map((event) =>
-              event.id === search.id
-                ? { ...event, plus_id: "new_upload" }
-                : event,
-            );
-        },
+        (key) => isEventsKey(key),
+        (currentData: SearchResult[][] | SearchResult[] | undefined) =>
+          mapSearchResults(currentData, (event) =>
+            event.id === search.id
+              ? { ...event, plus_id: "new_upload" }
+              : event,
+          ),
         {
           optimisticData: true,
           rollbackOnError: true,
@@ -1120,7 +1117,7 @@ function ObjectDetailsTab({
         },
       );
     },
-    [search, mutate],
+    [search, mutate, mapSearchResults, setSearch, isEventsKey],
   );
 
   const popoverContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1155,7 +1152,7 @@ function ObjectDetailsTab({
                     </div>
                     <div className="flex flex-row items-center gap-2 text-sm smart-capitalize">
                       {getIconForLabel(search.label, "size-4 text-primary")}
-                      {getTranslatedLabel(search.label)}
+                      {getTranslatedLabel(search.label, search.data.type)}
                       {search.sub_label && ` (${search.sub_label})`}
                       {isAdmin && search.end_time && (
                         <Tooltip>
@@ -1298,6 +1295,7 @@ function ObjectDetailsTab({
 
       {search.data.type === "object" &&
         config?.plus?.enabled &&
+        search.end_time != undefined &&
         search.has_snapshot && (
           <div
             className={cn(
@@ -1394,7 +1392,9 @@ function ObjectDetailsTab({
               {state == "submitted" && (
                 <div className="flex flex-row items-center justify-center gap-2">
                   <FaCheckCircle className="size-4 text-success" />
-                  {t("explore.plus.review.state.submitted")}
+                  {t("explore.plus.review.state.submitted", {
+                    ns: "components/dialog",
+                  })}
                 </div>
               )}
             </div>
@@ -1501,7 +1501,7 @@ function ObjectDetailsTab({
         ) : (
           <div className="flex flex-col gap-2">
             <Textarea
-              className="text-md h-32"
+              className="text-md h-32 md:text-sm"
               placeholder={t("details.description.placeholder")}
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
@@ -1509,25 +1509,7 @@ function ObjectDetailsTab({
               onBlur={handleDescriptionBlur}
               autoFocus
             />
-            <div className="flex flex-row justify-end gap-4">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    aria-label={t("button.save", { ns: "common" })}
-                    className="text-primary/40 hover:text-primary/80"
-                    onClick={() => {
-                      setIsEditingDesc(false);
-                      updateDescription();
-                    }}
-                  >
-                    <FaCheck className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("button.save", { ns: "common" })}
-                </TooltipContent>
-              </Tooltip>
-
+            <div className="mb-10 flex flex-row justify-end gap-5">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -1538,11 +1520,29 @@ function ObjectDetailsTab({
                       setDesc(originalDescRef.current ?? "");
                     }}
                   >
-                    <FaTimes className="size-4" />
+                    <FaTimes className="size-5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
                   {t("button.cancel", { ns: "common" })}
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label={t("button.save", { ns: "common" })}
+                    className="text-primary/40 hover:text-primary/80"
+                    onClick={() => {
+                      setIsEditingDesc(false);
+                      updateDescription();
+                    }}
+                  >
+                    <FaCheck className="size-5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t("button.save", { ns: "common" })}
                 </TooltipContent>
               </Tooltip>
             </div>
