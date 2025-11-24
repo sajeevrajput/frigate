@@ -505,7 +505,7 @@ class RemoteObjectDetector:
                         pending_regions.remove(r)
             # end of while pending_regions
             if pending_regions:
-                self.logger.warning(f"{self.name}: Timeout waiting for regions: {pending_regions}")
+                logger.warning(f"{self.name}: Timeout waiting for regions: {pending_regions}")
         
         logger.debug(f"{self.name}: Region detections keys: {region_detections_map.keys()}")
         logger.debug(f"{self.name}: Region detections : {region_detections_map}")

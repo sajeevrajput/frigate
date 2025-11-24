@@ -898,8 +898,8 @@ def process_frames(
                     ]
                     regions += motion_regions
             # regions = [(475, 360, 1171, 1056)]  # hardcoded fixed regions for benchmarking
-            regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056), (475, 360, 1171, 1056)]
-
+            regions = [(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056),(475, 360, 1171, 1056), (475, 360, 1171, 1056), (475, 360, 1171, 1056)]
+            # logger.info(f"Regions: {len(regions)}")
             # if starting up, get the next startup scan region
             if startup_scan:
                 for region in get_startup_regions(
