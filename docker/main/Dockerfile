@@ -72,16 +72,14 @@ RUN --mount=type=bind,source=docker/main/install_tempio.sh,target=/deps/install_
 # Download and Convert OpenVino model
 FROM base_host AS ov-converter
 ARG DEBIAN_FRONTEND
-ARG PIP_BREAK_SYSTEM_PACKAGES
 
 # Install OpenVino Runtime and Dev library
 COPY docker/main/requirements-ov.txt /requirements-ov.txt
 RUN apt-get -qq update \
-    && apt-get -qq install -y wget python3 python3-dev python3-distutils gcc pkg-config python3-pip libhdf5-dev \
-    # && wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
-    # && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
-    # && python3 get-pip.py "pip" \
-    && pip3 install --upgrade pip \
+    && apt-get -qq install -y wget python3 python3-dev python3-distutils gcc pkg-config libhdf5-dev \
+    && wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
+    && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
+    && python3 get-pip.py "pip" \
     && pip3 install -r /requirements-ov.txt
 
 # Get OpenVino Model
@@ -149,7 +147,6 @@ RUN --mount=type=bind,source=docker/main/install_s6_overlay.sh,target=/deps/inst
 
 FROM base AS wheels
 ARG DEBIAN_FRONTEND
-ARG PIP_BREAK_SYSTEM_PACKAGES
 ARG TARGETARCH
 ARG DEBUG=false
 
@@ -161,7 +158,6 @@ RUN apt-get -qq update \
     && apt-get -qq install -y \
     python3.11 \
     python3.11-dev \
-    python3-pip \
     # opencv dependencies
     build-essential cmake git pkg-config libgtk-3-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev \
@@ -177,9 +173,9 @@ RUN apt-get -qq update \
 
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
-# RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
-#     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
-#     && python3 get-pip.py "pip"
+RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
+    && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
+    && python3 get-pip.py "pip"
 
 COPY docker/main/requirements.txt /requirements.txt
 COPY docker/main/requirements-dev.txt /requirements-dev.txt
@@ -219,7 +215,6 @@ ARG TARGETARCH
 ARG BASE_IMAGE
 
 ARG DEBIAN_FRONTEND
-ARG PIP_BREAK_SYSTEM_PACKAGES
 # http://stackoverflow.com/questions/48162574/ddg#49462622
 ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn
 
@@ -254,15 +249,9 @@ RUN --mount=type=bind,source=docker/main/install_deps.sh,target=/deps/install_de
 ENV DEFAULT_FFMPEG_VERSION="7.0"
 ENV INCLUDED_FFMPEG_VERSIONS="${DEFAULT_FFMPEG_VERSION}:5.0"
 
-# RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
-#     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
-#     && python3 get-pip.py "pip"
-
-RUN apt-get -qq update \
-    && apt-get -qq install -y \    
-    python3.11 \
-    python3.11-dev \
-    python3-pip 
+RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
+    && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
+    && python3 get-pip.py "pip"
 
 RUN --mount=type=bind,from=wheels,source=/wheels,target=/deps/wheels \
     pip3 install -U /deps/wheels/*.whl
